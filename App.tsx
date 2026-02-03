@@ -6,7 +6,6 @@ import {
   Download, 
   CheckCircle, 
   Sparkles,
-  Table as TableIcon,
   Trash2,
   Files,
   XCircle,
@@ -16,10 +15,32 @@ import {
   ChevronDown,
   ArrowUpDown,
   Moon,
-  Sun
+  Sun,
+  Link2,
+  Lock,
+  ExternalLink,
+  ShieldCheck,
+  Terminal,
+  Copy,
+  Check,
+  ArrowRight,
+  Info,
+  MousePointer2,
+  Keyboard,
+  Zap,
+  Star,
+  Loader2,
+  Table
 } from 'lucide-react';
 import { Transaction, ProcessedTransaction, AiSummary, FileStatus } from './types';
-import { parseCSV, processTransactions, convertToCSV, parseAmountToNumber, mergeAndDeduplicate, FileOrigin } from './utils/csvProcessor';
+import { 
+  parseCSV, 
+  processTransactions, 
+  convertToCSV, 
+  parseAmountToNumber, 
+  mergeAndDeduplicate, 
+  FileOrigin
+} from './utils/csvProcessor';
 import { getFinancialSummary } from './services/geminiService';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
@@ -41,6 +62,12 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('theme');
     return saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);
   });
+  
+  const [showConnectModal, setShowConnectModal] = useState(false);
+  const [wsStep, setWsStep] = useState<1 | 2 | 3>(1);
+  const [wsPasteContent, setWsPasteContent] = useState("");
+  const [copyFeedback, setCopyFeedback] = useState(false);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -53,319 +80,275 @@ const App: React.FC = () => {
     }
   }, [isDarkMode]);
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  /* Improved Bookmarklet with quoted date fields to prevent CSV column shifts */
+  const magicSyncCode = useMemo(() => {
+    const code = `javascript:(async function(){
+      const notify = (msg, color="#3b82f6") => {
+        let div = document.getElementById('ws-sync-status');
+        if(!div){
+          div = document.createElement('div');
+          div.id = 'ws-sync-status';
+          div.style = 'position:fixed;bottom:30px;right:30px;z-index:999999;padding:20px 30px;border-radius:20px;color:white;font-weight:900;font-family:sans-serif;box-shadow:0 20px 50px rgba(0,0,0,0.3);transition:all 0.3s;font-size:16px;';
+          document.body.appendChild(div);
+        }
+        div.style.backgroundColor = color;
+        div.innerText = msg;
+      };
+
+      notify("🚀 Sync Engine Active - Loading History...");
+
+      let lastHeight = document.body.scrollHeight;
+      for(let i=0; i<8; i++){
+        window.scrollTo(0, document.body.scrollHeight);
+        await new Promise(r => setTimeout(r, 1000));
+        let newHeight = document.body.scrollHeight;
+        if(newHeight === lastHeight) break;
+        lastHeight = newHeight;
+        notify("⏳ Scrolling ("+(i+1)+"/8)...");
+      }
+
+      const rows = [];
+      const dateHeaders = Array.from(document.querySelectorAll('h2, [class*="DateHeader"]'));
+      
+      dateHeaders.forEach(header => {
+        const dateText = header.innerText.trim();
+        let container = header.nextElementSibling;
+        if(!container) return;
+
+        const items = Array.from(container.querySelectorAll('button, [role="button"], li'));
+        items.forEach(item => {
+          const textParts = Array.from(item.querySelectorAll('p, span, div, b'))
+            .map(el => el.innerText.trim())
+            .filter(t => t.length > 0 && !t.includes('\\n'));
+
+          const amount = textParts.find(t => t.includes('$') && /[0-9]/.test(t));
+          if (!amount) return;
+
+          const filters = ['purchase', 'wealthsimple', 'card', 'pending', 'refund', 'interac', 'e-transfer', 'cad', 'visa', 'mastercard'];
+          const merchant = textParts.find(t => 
+            t !== amount && 
+            !filters.some(f => t.toLowerCase().includes(f)) &&
+            t.length > 2
+          ) || textParts[0];
+
+          if(amount && merchant && dateText) {
+            rows.push({ Date: dateText, Description: merchant, Amount: amount, Account: "Wealthsimple Card" });
+          }
+        });
+      });
+
+      if(rows.length === 0) {
+        notify("❌ No transactions found! Try scrolling manually.", "#ef4444");
+        return;
+      }
+
+      /* CRITICAL: Wrap date and amount in quotes to handle commas within dates */
+      const csv = "Date,Description,Amount,Account\\n" + rows.map(r => \`"\${r.Date}","\${r.Description}","\${r.Amount}","\${r.Account}"\`).join("\\n");
+      
+      const copyToClipboard = (text) => {
+        const el = document.createElement('textarea');
+        el.value = text;
+        el.style.position = 'absolute';
+        el.style.left = '-9999px';
+        document.body.appendChild(el);
+        el.select();
+        const success = document.execCommand('copy');
+        document.body.removeChild(el);
+        return success;
+      };
+
+      if(copyToClipboard(csv)) {
+        notify("✅ Success! " + rows.length + " items copied.", "#10b981");
+      } else {
+        console.log(csv);
+        notify("⚠️ Copy Blocked - Check Console (F12)", "#f59e0b");
+      }
+    })();`;
+    return code.replace(/\s+/g, ' ');
+  }, []);
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement> | { target: { files: FileList | null } }) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
-
     setIsProcessing(true);
-    const newStatuses: FileStatus[] = [];
     let combinedTransactions: ProcessedTransaction[] = [...processedData];
+    const newStatuses: FileStatus[] = [];
 
     const processFile = (file: File): Promise<void> => {
       return new Promise((resolve) => {
         const fileNameUpper = file.name.toUpperCase();
         let accountName = "Other";
         let origin: FileOrigin = 'OTHER';
-
-        if (fileNameUpper.startsWith('EQ_')) {
-          accountName = "EQ Bank";
-          origin = 'EQ';
-        } else if (fileNameUpper.startsWith('CIBC_')) {
-          accountName = "CIBC";
-          origin = 'CIBC';
-        } else if (fileNameUpper.startsWith('PC_')) {
-          accountName = "PC Financial";
-          origin = 'PC';
-        } else {
-          accountName = file.name.split('.')[0].replace(/_/g, ' ');
-        }
-
+        if (fileNameUpper.includes('EQ')) { accountName = "EQ Bank"; origin = 'EQ'; }
+        else if (fileNameUpper.includes('CIBC')) { accountName = "CIBC"; origin = 'CIBC'; }
+        else if (fileNameUpper.includes('WS')) { accountName = "Wealthsimple"; origin = 'WS'; }
+        
         const reader = new FileReader();
         reader.onload = (e) => {
           const text = e.target?.result as string;
           const parsed = parseCSV(text);
           const processed = processTransactions(parsed, accountName, origin);
-          
           combinedTransactions = [...combinedTransactions, ...processed];
-          newStatuses.push({
-            name: file.name,
-            status: 'processed',
-            count: processed.length
-          });
+          newStatuses.push({ name: file.name, status: 'processed', count: processed.length });
           resolve();
         };
         reader.readAsText(file);
       });
     };
 
-    // Process all files
-    for (const file of Array.from(files) as File[]) {
-      await processFile(file);
-    }
-
-    // Deduplicate the combined results
-    const finalData = mergeAndDeduplicate(combinedTransactions);
-    
-    setProcessedData(finalData);
+    for (const file of Array.from(files) as File[]) { await processFile(file); }
+    setProcessedData(mergeAndDeduplicate(combinedTransactions));
     setFileStatuses(prev => [...prev, ...newStatuses]);
     setIsProcessing(false);
+    setShowConnectModal(false);
+  };
+
+  const handleWsSync = () => {
+    if (!wsPasteContent.trim()) return;
+    setIsProcessing(true);
+    const parsed = parseCSV(wsPasteContent);
+    const processed = processTransactions(parsed, "Wealthsimple Card", 'WS');
+    if (processed.length > 0) {
+      setProcessedData(mergeAndDeduplicate([...processedData, ...processed]));
+      setFileStatuses(prev => [...prev, {
+        name: `WS Sync ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`,
+        status: 'processed',
+        count: processed.length
+      }]);
+    }
+    setWsPasteContent("");
+    setIsProcessing(false);
+    setShowConnectModal(false);
+    setWsStep(1);
   };
 
   const sortedData = useMemo(() => {
-    let sortableItems = [...processedData];
-    if (sortConfig !== null) {
-      sortableItems.sort((a, b) => {
-        const aValue = a[sortConfig.key];
-        const bValue = b[sortConfig.key];
-
-        // Custom sorting for dates
+    let items = [...processedData];
+    if (sortConfig) {
+      items.sort((a, b) => {
+        const aVal = a[sortConfig.key];
+        const bVal = b[sortConfig.key];
         if (sortConfig.key === 'Date') {
-          const dateA = new Date(aValue).getTime();
-          const dateB = new Date(bValue).getTime();
-          return sortConfig.direction === 'asc' ? dateA - dateB : dateB - dateA;
+          return sortConfig.direction === 'asc' 
+            ? new Date(aVal).getTime() - new Date(bVal).getTime() 
+            : new Date(bVal).getTime() - new Date(aVal).getTime();
         }
-
-        // Standard sorting for other fields
-        if (aValue < bValue) {
-          return sortConfig.direction === 'asc' ? -1 : 1;
-        }
-        if (aValue > bValue) {
-          return sortConfig.direction === 'asc' ? 1 : -1;
-        }
-        return 0;
+        return sortConfig.direction === 'asc' 
+          ? (aVal < bVal ? -1 : 1) 
+          : (aVal > bVal ? -1 : 1);
       });
     }
-    return sortableItems;
+    return items;
   }, [processedData, sortConfig]);
 
-  const requestSort = (key: keyof ProcessedTransaction) => {
-    let direction: 'asc' | 'desc' = 'asc';
-    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
-      direction = 'desc';
-    }
-    setSortConfig({ key, direction });
-  };
-
-  const handleDownload = () => {
-    const csvContent = convertToCSV(sortedData);
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'Consolidated_Financial_Data.csv');
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const handleAiAnalysis = async () => {
-    if (processedData.length === 0) return;
-    setIsAnalyzing(true);
-    const summary = await getFinancialSummary(processedData);
-    setAiSummary(summary);
-    setIsAnalyzing(false);
-  };
-
-  const reset = () => {
-    setProcessedData([]);
-    setFileStatuses([]);
-    setAiSummary(null);
-    setSortConfig({ key: 'Date', direction: 'desc' });
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const chartData = useMemo(() => {
-    if (!aiSummary) return [];
-    return aiSummary.topCategories.map(item => ({
-      name: item.category,
-      value: Math.abs(item.amount)
-    }));
-  }, [aiSummary]);
-
-  const getSortIcon = (key: keyof ProcessedTransaction) => {
-    if (sortConfig?.key !== key) return <ArrowUpDown className="w-3.5 h-3.5 opacity-30" />;
-    return sortConfig.direction === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />;
+  const copyScriptFallback = () => {
+    navigator.clipboard.writeText(magicSyncCode);
+    setCopyFeedback(true);
+    setTimeout(() => setCopyFeedback(false), 2000);
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-20 text-slate-900 dark:text-slate-100 transition-colors duration-300">
-      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10 transition-colors duration-300">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-20 transition-colors">
+      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="bg-blue-600 p-2 rounded-lg shadow-sm">
-              <Files className="text-white w-5 h-5" />
+            <div className="bg-blue-600 p-2 rounded-xl shadow-blue-200 dark:shadow-none shadow-lg">
+              <Zap className="text-white w-5 h-5 fill-white" />
             </div>
-            <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">Financial <span className="text-blue-600">Merger</span></h1>
+            <h1 className="text-xl font-black tracking-tight">EQ Nando <span className="text-blue-600">Sync</span></h1>
           </div>
-          
-          <div className="flex items-center gap-2 md:gap-4">
-            <button
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all border border-transparent dark:border-slate-700"
-              title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setShowConnectModal(true)} 
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm transition-all shadow-md active:scale-95"
             >
-              {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              <Link2 className="w-4 h-4" /> Sync Wealthsimple
             </button>
-            
-            {processedData.length > 0 && (
-              <div className="flex items-center gap-2 md:gap-3">
-                <button 
-                  onClick={reset}
-                  className="text-slate-500 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400 transition-colors p-2 rounded-md hover:bg-red-50 dark:hover:bg-red-950/30"
-                  title="Clear all data"
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
-                <button 
-                  onClick={handleDownload}
-                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 md:px-4 py-2 rounded-lg font-medium transition-all shadow-sm hover:shadow-md"
-                >
-                  <Download className="w-4 h-4" />
-                  <span className="hidden sm:inline">Export CSV</span>
-                </button>
-              </div>
-            )}
+            <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all">
+              {isDarkMode ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-slate-600" />}
+            </button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 mt-8">
+      <main className="max-w-7xl mx-auto px-4 mt-10">
         {processedData.length === 0 ? (
-          <div className="flex flex-col items-center justify-center min-h-[70vh] text-center">
-            <div 
-              className="w-full max-w-2xl p-16 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-[2.5rem] bg-white dark:bg-slate-900 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-blue-900/10 transition-all group cursor-pointer shadow-sm"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <div className="bg-blue-50 dark:bg-blue-900/30 w-24 h-24 rounded-3xl flex items-center justify-center mx-auto mb-8 group-hover:scale-110 transition-transform shadow-inner">
-                <Upload className="w-12 h-12 text-blue-600 dark:text-blue-400" />
+          <div className="flex flex-col items-center justify-center min-h-[60vh] text-center animate-in fade-in zoom-in duration-500">
+            <div className="w-full max-w-2xl p-16 border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-[3rem] bg-white dark:bg-slate-900 shadow-sm">
+              <div className="w-20 h-20 bg-blue-50 dark:bg-blue-900/30 rounded-3xl flex items-center justify-center mx-auto mb-8">
+                <Upload className="w-10 h-10 text-blue-600" />
               </div>
-              <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white mb-3 tracking-tight">Consolidate Your Data</h2>
-              <p className="text-slate-500 dark:text-slate-400 mb-8 text-lg max-w-md mx-auto">
-                Upload files starting with <code className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-blue-600 dark:text-blue-400 font-mono text-base">EQ_</code>, <code className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-blue-600 dark:text-blue-400 font-mono text-base">CIBC_</code> or <code className="bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded text-blue-600 dark:text-blue-400 font-mono text-base">PC_</code> to automatically merge and clean them.
-              </p>
-              <input 
-                type="file" 
-                ref={fileInputRef}
-                onChange={handleFileUpload}
-                accept=".csv"
-                multiple
-                className="hidden" 
-              />
-              <button className="bg-slate-900 dark:bg-blue-600 text-white px-10 py-4 rounded-2xl font-bold text-lg shadow-xl hover:bg-slate-800 dark:hover:bg-blue-500 hover:-translate-y-1 transition-all">
-                Select CSV Statements
-              </button>
+              <h2 className="text-4xl font-black mb-4 tracking-tight">Financial Auditor</h2>
+              <p className="text-slate-500 dark:text-slate-400 mb-10 text-lg max-w-md mx-auto">Merge statements from multiple banks and get AI-powered spending insights instantly.</p>
+              <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                <button 
+                  onClick={() => fileInputRef.current?.click()} 
+                  className="bg-slate-900 dark:bg-blue-600 hover:bg-slate-800 dark:hover:bg-blue-700 text-white px-10 py-5 rounded-2xl font-black text-lg shadow-xl transition-all active:scale-95"
+                >
+                  Upload CSVs
+                </button>
+                <button 
+                  onClick={() => setShowConnectModal(true)} 
+                  className="bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white px-10 py-5 rounded-2xl font-black text-lg shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all active:scale-95"
+                >
+                  Magic Sync
+                </button>
+              </div>
+              <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv" multiple className="hidden" />
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 animate-in fade-in duration-700">
-            {/* Left: Files & Preview */}
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 animate-in slide-in-from-bottom duration-500">
             <div className="lg:col-span-3 space-y-6">
-              {/* File Status Card */}
-              <section className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-800 p-8 transition-colors duration-300">
-                <div className="flex items-center justify-between mb-6">
+              <section className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
+                <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/20">
                   <div className="flex items-center gap-3">
-                    <div className="p-2 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
-                      <CheckCircle className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                    </div>
-                    <h3 className="font-bold text-lg text-slate-800 dark:text-slate-100">Source Files Connected</h3>
+                    <Table className="w-5 h-5 text-blue-600" />
+                    <h3 className="font-black text-lg">Activity History</h3>
                   </div>
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
-                  >
-                    <Upload className="w-4 h-4" />
-                    Add More
-                  </button>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  {fileStatuses.map((file, idx) => (
-                    <div 
-                      key={idx} 
-                      className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl border text-sm font-bold shadow-sm transition-colors ${
-                        file.status === 'processed' 
-                          ? 'bg-emerald-50 dark:bg-emerald-900/10 border-emerald-100 dark:border-emerald-800/50 text-emerald-700 dark:text-emerald-400' 
-                          : 'bg-red-50 dark:bg-red-900/10 border-red-100 dark:border-red-800/50 text-red-600 dark:text-red-400'
-                      }`}
-                    >
-                      <span className="truncate max-w-[180px]">{file.name}</span>
-                      {file.status === 'processed' && (
-                        <span className="bg-emerald-200/50 dark:bg-emerald-500/20 px-2 py-0.5 rounded-lg text-[10px] uppercase tracking-wider">
-                          {file.count} rows
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              {/* Transactions Table */}
-              <section className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden transition-colors duration-300">
-                <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/20">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                      <TableIcon className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                    </div>
-                    <h3 className="font-bold text-lg text-slate-800 dark:text-slate-100">Merged Transaction Ledger</h3>
-                  </div>
-                  <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-4 py-1.5 rounded-xl shadow-sm">
-                    <span className="text-sm font-bold text-slate-600 dark:text-slate-400">
-                      Total: <span className="text-blue-600 dark:text-blue-400">{sortedData.length}</span> Unique Entries
-                    </span>
+                  <div className="flex gap-3">
+                    <button onClick={() => {
+                        const csv = convertToCSV(sortedData);
+                        const blob = new Blob([csv], { type: 'text/csv' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `Audit_Report_${new Date().toISOString().split('T')[0]}.csv`;
+                        a.click();
+                    }} className="text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 px-3 py-1.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-colors">
+                      <Download className="w-4 h-4" /> Export
+                    </button>
+                    <button onClick={() => setProcessedData([])} className="text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 px-3 py-1.5 rounded-lg font-bold text-sm flex items-center gap-2 transition-colors">
+                      <Trash2 className="w-4 h-4" /> Clear
+                    </button>
                   </div>
                 </div>
-                <div className="overflow-x-auto max-h-[650px] overflow-y-auto custom-scrollbar">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm sticky top-0 z-[5] border-b border-slate-100 dark:border-slate-800">
+                <div className="overflow-x-auto max-h-[700px] custom-scrollbar">
+                  <table className="w-full text-left text-sm border-collapse">
+                    <thead className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-md sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800">
                       <tr>
-                        <th className="px-8 py-5">
-                          <button 
-                            onClick={() => requestSort('Date')}
-                            className="flex items-center gap-2 font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest text-[10px] hover:text-blue-600 dark:hover:text-blue-400 transition-colors group"
-                          >
-                            Date
-                            {getSortIcon('Date')}
-                          </button>
+                        <th className="px-8 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em] cursor-pointer group" onClick={() => setSortConfig({ key: 'Date', direction: sortConfig?.direction === 'asc' ? 'desc' : 'asc' })}>
+                          <span className="flex items-center gap-2">Date {sortConfig?.key === 'Date' ? (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3"/> : <ChevronDown className="w-3 h-3"/>) : <ArrowUpDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity"/>}</span>
                         </th>
-                        <th className="px-8 py-5">
-                          <button 
-                            onClick={() => requestSort('Account/Card')}
-                            className="flex items-center gap-2 font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest text-[10px] hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                          >
-                            Account
-                            {getSortIcon('Account/Card')}
-                          </button>
-                        </th>
-                        <th className="px-8 py-5 font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest text-[10px]">Description</th>
-                        <th className="px-8 py-5 font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest text-[10px] text-right">Amount</th>
+                        <th className="px-8 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em]">Source</th>
+                        <th className="px-8 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em]">Merchant</th>
+                        <th className="px-8 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em] text-right">Amount</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
                       {sortedData.map((row, idx) => {
-                        const amount = parseAmountToNumber(row.Amount);
+                        const isWS = row['Account/Card'].includes('Wealthsimple');
+                        const isNeg = row.Amount.includes('-');
                         return (
-                          <tr key={idx} className="group hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-all">
-                            <td className="px-8 py-5 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">{row['Date']}</td>
+                          <tr key={idx} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                            <td className="px-8 py-5 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">{row.Date}</td>
                             <td className="px-8 py-5">
-                              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border transition-colors ${
-                                row['Account/Card'] === 'EQ Bank' 
-                                  ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-100 dark:border-blue-800 text-blue-700 dark:text-blue-400' 
-                                  : row['Account/Card'] === 'CIBC'
-                                  ? 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800 text-red-700 dark:text-red-400'
-                                  : row['Account/Card'] === 'PC Financial'
-                                  ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-100 dark:border-orange-800 text-orange-700 dark:text-orange-400'
-                                  : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                              }`}>
-                                <CreditCard className="w-3 h-3" />
+                              <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase border tracking-wider ${isWS ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 border-amber-100 dark:border-amber-900' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 border-blue-100 dark:border-blue-900'}`}>
                                 {row['Account/Card']}
                               </span>
                             </td>
-                            <td className="px-8 py-5 font-semibold text-slate-900 dark:text-slate-100 leading-tight">
-                              {row['Description']}
-                            </td>
-                            <td className={`px-8 py-5 text-right font-bold whitespace-nowrap tabular-nums text-base ${amount < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                              {row.Amount}
-                            </td>
+                            <td className="px-8 py-5 font-bold text-slate-800 dark:text-slate-100 text-base">{row.Description}</td>
+                            <td className={`px-8 py-5 text-right font-black text-base ${isNeg ? 'text-rose-500' : 'text-emerald-500'}`}>{row.Amount}</td>
                           </tr>
                         );
                       })}
@@ -374,109 +357,166 @@ const App: React.FC = () => {
                 </div>
               </section>
             </div>
-
-            {/* Right: AI Insights */}
             <div className="space-y-6">
-              <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-lg border border-slate-200 dark:border-slate-800 p-8 sticky top-24 overflow-hidden transition-colors duration-300">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-violet-50 dark:bg-violet-900/10 rounded-full -mr-16 -mt-16 blur-3xl opacity-50"></div>
-                
-                {!aiSummary && !isAnalyzing ? (
-                  <div className="text-center py-4 relative z-[1]">
-                    <div className="bg-gradient-to-br from-violet-600 to-indigo-600 w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-xl shadow-violet-200 dark:shadow-none rotate-3">
-                      <Sparkles className="w-10 h-10 text-white" />
-                    </div>
-                    <h4 className="text-2xl font-black text-slate-900 dark:text-white mb-3">Portfolio IQ</h4>
-                    <p className="text-slate-500 dark:text-slate-400 mb-8 leading-relaxed">Let Gemini AI synthesize your combined financial health and uncover hidden spending patterns.</p>
-                    <button 
-                      onClick={handleAiAnalysis}
-                      disabled={isProcessing}
-                      className="w-full bg-slate-900 dark:bg-violet-600 hover:bg-slate-800 dark:hover:bg-violet-500 text-white py-4 rounded-2xl font-bold transition-all shadow-xl flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95"
-                    >
-                      <Sparkles className="w-5 h-5 text-violet-400 dark:text-violet-200" />
-                      Run Intelligence
-                    </button>
+               <div className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-xl border border-slate-200 dark:border-slate-800 p-8 text-center sticky top-24 overflow-hidden">
+                  <div className="absolute top-0 right-0 p-4 opacity-10">
+                    <Sparkles className="w-20 h-20 text-blue-600" />
                   </div>
-                ) : isAnalyzing ? (
-                  <div className="py-16 flex flex-col items-center justify-center text-center">
-                    <div className="relative w-20 h-20 mb-6">
-                      <div className="absolute inset-0 border-8 border-violet-100 dark:border-slate-800 rounded-full"></div>
-                      <div className="absolute inset-0 border-8 border-violet-600 dark:border-violet-500 rounded-full border-t-transparent animate-spin"></div>
+                  <h4 className="font-black text-xl mb-3 tracking-tight">Spending Analysis</h4>
+                  <p className="text-slate-500 dark:text-slate-400 text-sm mb-8">Gemini AI will scan your transactions for recurring costs and savings opportunities.</p>
+                  
+                  {isAnalyzing ? (
+                    <div className="flex flex-col items-center py-10">
+                      <Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-4" />
+                      <p className="font-bold text-slate-600 animate-pulse">Consulting AI Assistant...</p>
                     </div>
-                    <p className="text-slate-900 dark:text-white font-extrabold text-xl">Synthesizing Data</p>
-                    <p className="text-slate-400 dark:text-slate-500 text-sm mt-2">Connecting cross-account trends...</p>
-                  </div>
-                ) : (
-                  <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 relative z-[1]">
-                    <div className="flex items-center justify-between mb-8">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-violet-600 rounded-xl">
-                          <Sparkles className="w-5 h-5 text-white" />
-                        </div>
-                        <h3 className="font-extrabold text-xl text-slate-900 dark:text-white tracking-tight">AI Audit</h3>
-                      </div>
-                    </div>
-
-                    <div className="space-y-8">
+                  ) : aiSummary ? (
+                    <div className="text-left space-y-6 animate-in fade-in duration-500">
                       <div>
-                        <h4 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-3">Strategy Overview</h4>
-                        <p className="text-slate-800 dark:text-slate-200 font-medium text-base leading-relaxed">{aiSummary?.overview}</p>
+                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Summary</span>
+                        <p className="text-sm leading-relaxed mt-2 text-slate-700 dark:text-slate-300">{aiSummary.overview}</p>
                       </div>
-
-                      <div className="h-56 w-full -mx-2">
-                        <h4 className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[0.2em] mb-4 mx-2">Spending Breakdown</h4>
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={chartData}
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={55}
-                              outerRadius={75}
-                              paddingAngle={8}
-                              dataKey="value"
-                              stroke="none"
-                            >
-                              {chartData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                              ))}
-                            </Pie>
-                            <Tooltip 
-                              contentStyle={{ 
-                                borderRadius: '16px', 
-                                border: 'none', 
-                                backgroundColor: isDarkMode ? '#1e293b' : '#ffffff',
-                                color: isDarkMode ? '#f1f5f9' : '#1e293b',
-                                boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' 
-                              }}
-                            />
-                          </PieChart>
-                        </ResponsiveContainer>
+                      <div className="bg-slate-900 dark:bg-slate-800 p-5 rounded-2xl border border-blue-900/30">
+                        <span className="text-[10px] font-black uppercase text-blue-400 tracking-widest">Savings Goal</span>
+                        <p className="text-xs italic text-white/90 mt-2">"{aiSummary.savingsAdvice}"</p>
                       </div>
-
-                      <div className="bg-slate-900 dark:bg-slate-800 rounded-3xl p-6 shadow-xl relative overflow-hidden group">
-                        <div className="absolute top-0 right-0 p-4 opacity-20 group-hover:scale-125 transition-transform">
-                          <AlertCircle className="w-12 h-12 text-violet-400" />
-                        </div>
-                        <h4 className="text-xs font-black text-violet-400 dark:text-violet-300 uppercase tracking-[0.2em] mb-2">Core Advice</h4>
-                        <p className="text-white dark:text-slate-100 font-medium text-sm leading-relaxed relative z-[1]">
-                          {aiSummary?.savingsAdvice}
-                        </p>
-                      </div>
-
-                      <button 
-                        onClick={handleAiAnalysis}
-                        className="w-full border-2 border-slate-100 dark:border-slate-800 text-slate-500 dark:text-slate-400 py-3 rounded-2xl text-sm font-bold hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-white transition-all active:scale-95"
-                      >
-                        Refresh Intelligence
-                      </button>
+                      <button onClick={() => setAiSummary(null)} className="w-full text-slate-400 text-[10px] font-black uppercase hover:text-blue-600 transition-colors">Refresh Analysis</button>
                     </div>
-                  </div>
-                )}
-              </div>
+                  ) : (
+                    <button 
+                      onClick={async () => {
+                        setIsAnalyzing(true);
+                        setAiSummary(await getFinancialSummary(processedData));
+                        setIsAnalyzing(false);
+                      }} 
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black text-lg shadow-lg shadow-blue-200 dark:shadow-none transition-all active:scale-95"
+                    >
+                      Audit Spendings
+                    </button>
+                  )}
+               </div>
             </div>
           </div>
         )}
       </main>
+
+      {/* Improved Magic Sync Modal */}
+      {showConnectModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-xl rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800">
+            <div className="bg-amber-500 h-2 w-full"></div>
+            <div className="p-8">
+              <div className="flex justify-between items-start mb-8">
+                <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-2xl">
+                  <Zap className="w-8 h-8 text-amber-500 fill-amber-500" />
+                </div>
+                <button onClick={() => setShowConnectModal(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"><XCircle className="w-7 h-7 text-slate-300" /></button>
+              </div>
+
+              <div className="flex items-center gap-2 mb-10">
+                {[1, 2, 3].map(step => (
+                  <React.Fragment key={step}>
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-sm transition-all ${wsStep === step ? 'bg-amber-500 text-white scale-110 shadow-lg shadow-amber-200 dark:shadow-none' : wsStep > step ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
+                      {wsStep > step ? <Check className="w-5 h-5" /> : step}
+                    </div>
+                    {step < 3 && <div className={`flex-1 h-1 rounded-full ${wsStep > step ? 'bg-emerald-500' : 'bg-slate-100 dark:bg-slate-800'}`}></div>}
+                  </React.Fragment>
+                ))}
+              </div>
+
+              {wsStep === 1 && (
+                <div className="animate-in slide-in-from-right duration-300">
+                  <h2 className="text-3xl font-black mb-4 tracking-tight">Sync Wealthsimple</h2>
+                  <p className="text-slate-500 dark:text-slate-400 text-sm mb-8 leading-relaxed">
+                    <b>Drag the magic button</b> below into your browser's Bookmarks Bar. If dragging is disabled in your browser, click "Copy Script" and create a bookmark manually.
+                  </p>
+                  <div className="flex flex-col items-center gap-6 mb-10">
+                    <div className="relative group">
+                      <div className="absolute -inset-1 bg-gradient-to-r from-amber-600 to-amber-400 rounded-2xl blur opacity-25 group-hover:opacity-75 transition duration-1000 group-hover:duration-200"></div>
+                      <div dangerouslySetInnerHTML={{ __html: `
+                        <a 
+                          href="${magicSyncCode}"
+                          draggable="true"
+                          style="position:relative; display:inline-flex; align-items:center; gap:12px; padding:20px 40px; background:#f59e0b; color:white; border-radius:16px; font-weight:900; font-size:20px; text-decoration:none; box-shadow:0 10px 15px -3px rgba(0, 0, 0, 0.1); cursor:move;"
+                          onmouseover="this.style.background='#d97706'"
+                          onmouseout="this.style.background='#f59e0b'"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                          Magic Sync
+                        </a>
+                      `}} />
+                    </div>
+                    <div className="flex gap-4">
+                      <div className="bg-slate-50 dark:bg-slate-800/50 px-4 py-2 rounded-lg border border-slate-100 dark:border-slate-700">
+                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em]">↑ Drag this button up ↑</p>
+                      </div>
+                      <button 
+                        onClick={copyScriptFallback}
+                        className="text-[10px] text-blue-600 font-black uppercase tracking-[0.2em] hover:underline"
+                      >
+                        {copyFeedback ? 'Copied!' : 'Copy Script Instead'}
+                      </button>
+                    </div>
+                  </div>
+                  <button onClick={() => setWsStep(2)} className="w-full bg-slate-900 dark:bg-amber-600 text-white py-5 rounded-2xl font-black text-lg flex items-center justify-center gap-3 hover:bg-slate-800 dark:hover:bg-amber-700 transition-all shadow-xl">
+                    I've added it <ArrowRight className="w-5 h-5"/>
+                  </button>
+                </div>
+              )}
+
+              {wsStep === 2 && (
+                <div className="animate-in slide-in-from-right duration-300">
+                  <h2 className="text-3xl font-black mb-4 tracking-tight">Run Extraction</h2>
+                  <div className="space-y-4 mb-8">
+                    <div className="flex items-start gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
+                      <div className="bg-white dark:bg-slate-900 p-2 rounded-lg shadow-sm font-black text-blue-600 text-xs">A</div>
+                      <p className="text-sm font-medium">Login to <span className="text-amber-600 font-bold">Wealthsimple</span> and go to your Account activity.</p>
+                    </div>
+                    <div className="flex items-start gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
+                      <div className="bg-white dark:bg-slate-900 p-2 rounded-lg shadow-sm font-black text-blue-600 text-xs">B</div>
+                      <p className="text-sm font-medium">Click the <span className="text-amber-600 font-bold">"Magic Sync"</span> bookmark in your bar.</p>
+                    </div>
+                    <div className="flex items-start gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
+                      <div className="bg-white dark:bg-slate-900 p-2 rounded-lg shadow-sm font-black text-blue-600 text-xs">C</div>
+                      <p className="text-sm font-medium">Wait for the <span className="text-emerald-500 font-bold">"Success"</span> box to appear on screen.</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-4">
+                    <button onClick={() => setWsStep(1)} className="px-8 py-5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-2xl font-black hover:bg-slate-200 transition-all">Back</button>
+                    <button onClick={() => setWsStep(3)} className="flex-1 bg-slate-900 dark:bg-blue-600 text-white py-5 rounded-2xl font-black text-lg flex items-center justify-center gap-3 shadow-xl">Extraction Complete <ArrowRight className="w-5 h-5"/></button>
+                  </div>
+                </div>
+              )}
+
+              {wsStep === 3 && (
+                <div className="animate-in slide-in-from-right duration-300">
+                   <h2 className="text-3xl font-black mb-4 tracking-tight">Consolidate Data</h2>
+                   <p className="text-slate-500 dark:text-slate-400 text-sm mb-6 leading-relaxed">The Magic Sync automatically copied the merchant data. Simply paste (Ctrl+V) it below to merge with your history.</p>
+                   <textarea 
+                    value={wsPasteContent}
+                    onChange={(e) => setWsPasteContent(e.target.value)}
+                    placeholder="Paste the extracted data here..."
+                    className="w-full h-48 bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-[2rem] p-6 text-xs font-mono mb-8 focus:border-amber-500 outline-none shadow-inner resize-none transition-all"
+                   ></textarea>
+                   <div className="flex gap-4">
+                    <button onClick={() => setWsStep(2)} className="px-8 py-5 bg-slate-100 dark:bg-slate-800 text-slate-600 rounded-2xl font-black">Back</button>
+                    <button 
+                      onClick={handleWsSync} 
+                      disabled={!wsPasteContent.trim()} 
+                      className="flex-1 bg-amber-500 disabled:opacity-30 text-white py-5 rounded-2xl font-black text-lg shadow-xl shadow-amber-200 dark:shadow-none active:scale-95 transition-all"
+                    >
+                      Merge Transactions
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/50 text-center border-t border-slate-100 dark:border-slate-800">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center justify-center gap-2"><Lock className="w-3 h-3" /> Secure Local Environment</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
