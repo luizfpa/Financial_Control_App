@@ -165,9 +165,20 @@ const App: React.FC = () => {
         const fileNameUpper = file.name.toUpperCase();
         let accountName = "Other";
         let origin: FileOrigin = 'OTHER';
-        if (fileNameUpper.includes('EQ')) { accountName = "EQ Bank"; origin = 'EQ'; }
-        else if (fileNameUpper.includes('CIBC')) { accountName = "CIBC"; origin = 'CIBC'; }
-        else if (fileNameUpper.includes('WS')) { accountName = "Wealthsimple"; origin = 'WS'; }
+        
+        if (fileNameUpper.includes('EQ')) { 
+          accountName = "EQ Bank"; 
+          origin = 'EQ'; 
+        } else if (fileNameUpper.includes('CIBC')) { 
+          accountName = "CIBC"; 
+          origin = 'CIBC'; 
+        } else if (fileNameUpper.includes('WS')) { 
+          accountName = "Wealthsimple"; 
+          origin = 'WS'; 
+        } else if (fileNameUpper.startsWith('PC_')) { 
+          accountName = "PC Financial"; 
+          origin = 'PC'; 
+        }
         
         const reader = new FileReader();
         reader.onload = (e) => {

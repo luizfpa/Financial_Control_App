@@ -2,19 +2,29 @@
 import { Transaction, ProcessedTransaction } from '../types';
 
 /**
- * Normalizes monetary values (Handles Wealthsimple's specific characters)
+ * Normalizes monetary values (Handles Wealthsimple's specific characters and accounting notation)
  */
 export const parseAmountToNumber = (amountStr: string): number => {
   if (!amountStr || typeof amountStr !== 'string') return 0;
-  const cleaned = amountStr
+  let str = amountStr.trim();
+  let multiplier = 1;
+  
+  // Handle (Amount) as negative (Accounting notation common in bank statements)
+  if (str.startsWith('(') && str.endsWith(')')) {
+    multiplier = -1;
+    str = str.substring(1, str.length - 1);
+  }
+
+  const cleaned = str
     .replace(/[−–—]/g, "-")
     .replace(/\$/g, "")
     .replace(/,/g, "")
     .replace(/CAD/gi, "")
     .replace(/\s/g, "")
     .trim();
+  
   const val = parseFloat(cleaned);
-  return isNaN(val) ? 0 : val;
+  return isNaN(val) ? 0 : val * multiplier;
 };
 
 const MONTH_MAP: Record<string, string> = {
@@ -112,11 +122,9 @@ export const parseCSV = (csvText: string): any[] => {
       }
       
       // Step 2: Fix Amount split (e.g., "$2" and "252.76 CAD")
-      // Current values should look like [Date, Description, AmountPart1, AmountPart2, Account]
       if (values.length === 5) {
         const p2 = values[2].trim();
         const p3 = values[3].trim();
-        // If either part contains currency indicators, merge them
         if (p2.includes('$') || p3.toLowerCase().includes('cad') || /^\d+\.?\d*$/.test(p3)) {
           const mergedAmt = `${values[2]},${values[3]}`;
           values.splice(2, 2, mergedAmt);
@@ -155,10 +163,9 @@ export type FileOrigin = 'EQ' | 'CIBC' | 'PC' | 'WS' | 'OTHER';
 export const processTransactions = (transactions: any[], accountName: string, origin: FileOrigin): ProcessedTransaction[] => {
   return transactions
     .filter(t => {
-      // Clean up description logic for CIBC or any origin
       const desc = (t['Description'] || t['description'] || '').toUpperCase();
       
-      // Specifically filter out unwanted CIBC rows as requested
+      // Specifically filter out unwanted CIBC rows
       if (origin === 'CIBC') {
         if (desc.includes('ROYAL BANK OF CANADA MONTREAL') || 
             desc.includes('PAYMENT THANK YOU') || 
@@ -166,18 +173,29 @@ export const processTransactions = (transactions: any[], accountName: string, or
           return false;
         }
       }
+
+      // Filter out unwanted PC rows (Payment type)
+      if (origin === 'PC') {
+        const type = (t['Type'] || t['type'] || '').toLowerCase();
+        if (type === 'payment') {
+          return false;
+        }
+      }
+
       return true;
     })
     .map(t => {
       let rawAmount = t['Amount'] || t['amount'] || '';
       let numericAmount = parseAmountToNumber(String(rawAmount));
       
+      // CIBC amounts are usually purchases (negative for processing)
       if (origin === 'CIBC') numericAmount = -Math.abs(numericAmount);
       
       let description = t['Description'] || t['description'] || 'No Description';
       description = description.replace(/\s+/g, ' ').trim();
 
-      const rawDate = t['Date'] || t['date'] || t['Transfer date'] || '';
+      // Support multiple date header variations
+      const rawDate = t['Date'] || t['date'] || t['Transfer date'] || t['Transfer Date'] || '';
       
       let finalSource = accountName;
       const incomingAccount = (t['Account'] || t['Account/Card'] || '').toLowerCase();
