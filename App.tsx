@@ -30,7 +30,8 @@ import {
   Zap,
   Star,
   Loader2,
-  Table
+  Table,
+  Plus
 } from 'lucide-react';
 import { Transaction, ProcessedTransaction, AiSummary, FileStatus } from './types';
 import { 
@@ -42,9 +43,6 @@ import {
   FileOrigin
 } from './utils/csvProcessor';
 import { getFinancialSummary } from './services/geminiService';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
 type SortConfig = {
   key: keyof ProcessedTransaction;
@@ -80,7 +78,6 @@ const App: React.FC = () => {
     }
   }, [isDarkMode]);
 
-  /* Improved Bookmarklet with quoted date fields to prevent CSV column shifts */
   const magicSyncCode = useMemo(() => {
     const code = `javascript:(async function(){
       const notify = (msg, color="#3b82f6") => {
@@ -88,23 +85,23 @@ const App: React.FC = () => {
         if(!div){
           div = document.createElement('div');
           div.id = 'ws-sync-status';
-          div.style = 'position:fixed;bottom:30px;right:30px;z-index:999999;padding:20px 30px;border-radius:20px;color:white;font-weight:900;font-family:sans-serif;box-shadow:0 20px 50px rgba(0,0,0,0.3);transition:all 0.3s;font-size:16px;';
+          div.style = 'position:fixed;bottom:30px;right:30px;z-index:999999;padding:12px 20px;border-radius:12px;color:white;font-weight:900;font-family:sans-serif;box-shadow:0 10px 30px rgba(0,0,0,0.3);transition:all 0.3s;font-size:12px;';
           document.body.appendChild(div);
         }
         div.style.backgroundColor = color;
         div.innerText = msg;
       };
 
-      notify("🚀 Sync Engine Active - Loading History...");
+      notify("🚀 Syncing...");
 
       let lastHeight = document.body.scrollHeight;
-      for(let i=0; i<8; i++){
+      for(let i=0; i<6; i++){
         window.scrollTo(0, document.body.scrollHeight);
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 800));
         let newHeight = document.body.scrollHeight;
         if(newHeight === lastHeight) break;
         lastHeight = newHeight;
-        notify("⏳ Scrolling ("+(i+1)+"/8)...");
+        notify("⏳ Scrolling ("+(i+1)+"/6)...");
       }
 
       const rows = [];
@@ -124,45 +121,34 @@ const App: React.FC = () => {
           const amount = textParts.find(t => t.includes('$') && /[0-9]/.test(t));
           if (!amount) return;
 
-          const filters = ['purchase', 'wealthsimple', 'card', 'pending', 'refund', 'interac', 'e-transfer', 'cad', 'visa', 'mastercard'];
           const merchant = textParts.find(t => 
             t !== amount && 
-            !filters.some(f => t.toLowerCase().includes(f)) &&
+            !['purchase', 'wealthsimple', 'card', 'pending', 'refund', 'interac', 'e-transfer', 'cad', 'visa', 'mastercard'].some(f => t.toLowerCase().includes(f)) &&
             t.length > 2
           ) || textParts[0];
 
           if(amount && merchant && dateText) {
-            rows.push({ Date: dateText, Description: merchant, Amount: amount, Account: "Wealthsimple Card" });
+            rows.push({ Date: dateText, Description: merchant, Amount: amount, Account: "Wealthsimple" });
           }
         });
       });
 
       if(rows.length === 0) {
-        notify("❌ No transactions found! Try scrolling manually.", "#ef4444");
+        notify("❌ No items found!", "#ef4444");
         return;
       }
 
-      /* CRITICAL: Wrap date and amount in quotes to handle commas within dates */
       const csv = "Date,Description,Amount,Account\\n" + rows.map(r => \`"\${r.Date}","\${r.Description}","\${r.Amount}","\${r.Account}"\`).join("\\n");
       
-      const copyToClipboard = (text) => {
-        const el = document.createElement('textarea');
-        el.value = text;
-        el.style.position = 'absolute';
-        el.style.left = '-9999px';
-        document.body.appendChild(el);
-        el.select();
-        const success = document.execCommand('copy');
-        document.body.removeChild(el);
-        return success;
-      };
+      const el = document.createElement('textarea');
+      el.value = csv;
+      document.body.appendChild(el);
+      el.select();
+      const success = document.execCommand('copy');
+      document.body.removeChild(el);
 
-      if(copyToClipboard(csv)) {
-        notify("✅ Success! " + rows.length + " items copied.", "#10b981");
-      } else {
-        console.log(csv);
-        notify("⚠️ Copy Blocked - Check Console (F12)", "#f59e0b");
-      }
+      if(success) notify("✅ Copied " + rows.length + " transactions.", "#10b981");
+      else notify("⚠️ Error copying!", "#f59e0b");
     })();`;
     return code.replace(/\s+/g, ' ');
   }, []);
@@ -171,7 +157,7 @@ const App: React.FC = () => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
     setIsProcessing(true);
-    let combinedTransactions: ProcessedTransaction[] = [...processedData];
+    let currentData = [...processedData];
     const newStatuses: FileStatus[] = [];
 
     const processFile = (file: File): Promise<void> => {
@@ -188,7 +174,7 @@ const App: React.FC = () => {
           const text = e.target?.result as string;
           const parsed = parseCSV(text);
           const processed = processTransactions(parsed, accountName, origin);
-          combinedTransactions = [...combinedTransactions, ...processed];
+          currentData = [...currentData, ...processed];
           newStatuses.push({ name: file.name, status: 'processed', count: processed.length });
           resolve();
         };
@@ -197,10 +183,11 @@ const App: React.FC = () => {
     };
 
     for (const file of Array.from(files) as File[]) { await processFile(file); }
-    setProcessedData(mergeAndDeduplicate(combinedTransactions));
+    setProcessedData(mergeAndDeduplicate(currentData));
     setFileStatuses(prev => [...prev, ...newStatuses]);
     setIsProcessing(false);
     setShowConnectModal(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleWsSync = () => {
@@ -259,16 +246,23 @@ const App: React.FC = () => {
           </div>
           <div className="flex items-center gap-3">
             <button 
-              onClick={() => setShowConnectModal(true)} 
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm transition-all shadow-md active:scale-95"
+              onClick={() => fileInputRef.current?.click()} 
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs transition-all border border-slate-200 dark:border-slate-700 shadow-sm"
             >
-              <Link2 className="w-4 h-4" /> Sync Wealthsimple
+              <Plus className="w-4 h-4" /> Add Statements
+            </button>
+            <button 
+              onClick={() => setShowConnectModal(true)} 
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs transition-all shadow-md active:scale-95"
+            >
+              <Link2 className="w-4 h-4" /> Wealthsimple
             </button>
             <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all">
               {isDarkMode ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-slate-600" />}
             </button>
           </div>
         </div>
+        <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv" multiple className="hidden" />
       </header>
 
       <main className="max-w-7xl mx-auto px-4 mt-10">
@@ -279,7 +273,7 @@ const App: React.FC = () => {
                 <Upload className="w-10 h-10 text-blue-600" />
               </div>
               <h2 className="text-4xl font-black mb-4 tracking-tight">Financial Auditor</h2>
-              <p className="text-slate-500 dark:text-slate-400 mb-10 text-lg max-w-md mx-auto">Merge statements from multiple banks and get AI-powered spending insights instantly.</p>
+              <p className="text-slate-500 dark:text-slate-400 mb-10 text-lg max-w-md mx-auto">Merge your bank statements and visualize your spending habits.</p>
               <div className="flex flex-col sm:flex-row gap-4 justify-center">
                 <button 
                   onClick={() => fileInputRef.current?.click()} 
@@ -294,7 +288,6 @@ const App: React.FC = () => {
                   Magic Sync
                 </button>
               </div>
-              <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv" multiple className="hidden" />
             </div>
           </div>
         ) : (
@@ -362,13 +355,13 @@ const App: React.FC = () => {
                   <div className="absolute top-0 right-0 p-4 opacity-10">
                     <Sparkles className="w-20 h-20 text-blue-600" />
                   </div>
-                  <h4 className="font-black text-xl mb-3 tracking-tight">Spending Analysis</h4>
-                  <p className="text-slate-500 dark:text-slate-400 text-sm mb-8">Gemini AI will scan your transactions for recurring costs and savings opportunities.</p>
+                  <h4 className="font-black text-xl mb-3 tracking-tight">AI Insights</h4>
+                  <p className="text-slate-500 dark:text-slate-400 text-sm mb-8">Analyze spending patterns with AI.</p>
                   
                   {isAnalyzing ? (
                     <div className="flex flex-col items-center py-10">
                       <Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-4" />
-                      <p className="font-bold text-slate-600 animate-pulse">Consulting AI Assistant...</p>
+                      <p className="font-bold text-slate-600 animate-pulse text-sm">Analyzing transactions...</p>
                     </div>
                   ) : aiSummary ? (
                     <div className="text-left space-y-6 animate-in fade-in duration-500">
@@ -400,24 +393,23 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Improved Magic Sync Modal */}
       {showConnectModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-          <div className="bg-white dark:bg-slate-900 w-full max-w-xl rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800">
+          <div className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800">
             <div className="bg-amber-500 h-2 w-full"></div>
             <div className="p-8">
-              <div className="flex justify-between items-start mb-8">
-                <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-2xl">
-                  <Zap className="w-8 h-8 text-amber-500 fill-amber-500" />
+              <div className="flex justify-between items-start mb-6">
+                <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-2xl">
+                  <Zap className="w-6 h-6 text-amber-500 fill-amber-500" />
                 </div>
-                <button onClick={() => setShowConnectModal(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"><XCircle className="w-7 h-7 text-slate-300" /></button>
+                <button onClick={() => setShowConnectModal(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"><XCircle className="w-6 h-6 text-slate-300" /></button>
               </div>
 
-              <div className="flex items-center gap-2 mb-10">
+              <div className="flex items-center gap-2 mb-8">
                 {[1, 2, 3].map(step => (
                   <React.Fragment key={step}>
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-sm transition-all ${wsStep === step ? 'bg-amber-500 text-white scale-110 shadow-lg shadow-amber-200 dark:shadow-none' : wsStep > step ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
-                      {wsStep > step ? <Check className="w-5 h-5" /> : step}
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs transition-all ${wsStep === step ? 'bg-amber-500 text-white scale-110 shadow-lg shadow-amber-200 dark:shadow-none' : wsStep > step ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
+                      {wsStep > step ? <Check className="w-4 h-4" /> : step}
                     </div>
                     {step < 3 && <div className={`flex-1 h-1 rounded-full ${wsStep > step ? 'bg-emerald-500' : 'bg-slate-100 dark:bg-slate-800'}`}></div>}
                   </React.Fragment>
@@ -425,94 +417,73 @@ const App: React.FC = () => {
               </div>
 
               {wsStep === 1 && (
-                <div className="animate-in slide-in-from-right duration-300">
-                  <h2 className="text-3xl font-black mb-4 tracking-tight">Sync Wealthsimple</h2>
-                  <p className="text-slate-500 dark:text-slate-400 text-sm mb-8 leading-relaxed">
-                    <b>Drag the magic button</b> below into your browser's Bookmarks Bar. If dragging is disabled in your browser, click "Copy Script" and create a bookmark manually.
+                <div className="animate-in slide-in-from-right duration-300 text-center">
+                  <h2 className="text-2xl font-black mb-3 tracking-tight text-left">Wealthsimple Sync</h2>
+                  <p className="text-slate-500 dark:text-slate-400 text-xs mb-8 leading-relaxed text-left">
+                    Copy the sync code below and create a bookmark manually in your browser with this code as the URL.
                   </p>
-                  <div className="flex flex-col items-center gap-6 mb-10">
-                    <div className="relative group">
-                      <div className="absolute -inset-1 bg-gradient-to-r from-amber-600 to-amber-400 rounded-2xl blur opacity-25 group-hover:opacity-75 transition duration-1000 group-hover:duration-200"></div>
-                      <div dangerouslySetInnerHTML={{ __html: `
-                        <a 
-                          href="${magicSyncCode}"
-                          draggable="true"
-                          style="position:relative; display:inline-flex; align-items:center; gap:12px; padding:20px 40px; background:#f59e0b; color:white; border-radius:16px; font-weight:900; font-size:20px; text-decoration:none; box-shadow:0 10px 15px -3px rgba(0, 0, 0, 0.1); cursor:move;"
-                          onmouseover="this.style.background='#d97706'"
-                          onmouseout="this.style.background='#f59e0b'"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
-                          Magic Sync
-                        </a>
-                      `}} />
-                    </div>
-                    <div className="flex gap-4">
-                      <div className="bg-slate-50 dark:bg-slate-800/50 px-4 py-2 rounded-lg border border-slate-100 dark:border-slate-700">
-                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em]">↑ Drag this button up ↑</p>
-                      </div>
-                      <button 
-                        onClick={copyScriptFallback}
-                        className="text-[10px] text-blue-600 font-black uppercase tracking-[0.2em] hover:underline"
-                      >
-                        {copyFeedback ? 'Copied!' : 'Copy Script Instead'}
-                      </button>
-                    </div>
+                  
+                  <div className="mb-8">
+                    <button 
+                      onClick={copyScriptFallback}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-4 rounded-xl bg-slate-900 dark:bg-blue-600 text-white font-black text-sm transition-all shadow-xl active:scale-95 hover:bg-slate-800 dark:hover:bg-blue-700"
+                    >
+                      <Copy className="w-5 h-5" />
+                      {copyFeedback ? 'Copied Successfully!' : 'Copy Sync Code'}
+                    </button>
                   </div>
-                  <button onClick={() => setWsStep(2)} className="w-full bg-slate-900 dark:bg-amber-600 text-white py-5 rounded-2xl font-black text-lg flex items-center justify-center gap-3 hover:bg-slate-800 dark:hover:bg-amber-700 transition-all shadow-xl">
-                    I've added it <ArrowRight className="w-5 h-5"/>
+
+                  <button onClick={() => setWsStep(2)} className="w-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 py-4 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:bg-slate-200 transition-all border border-slate-200 dark:border-slate-700">
+                    I've Added It <ArrowRight className="w-4 h-4"/>
                   </button>
                 </div>
               )}
 
               {wsStep === 2 && (
                 <div className="animate-in slide-in-from-right duration-300">
-                  <h2 className="text-3xl font-black mb-4 tracking-tight">Run Extraction</h2>
+                  <h2 className="text-2xl font-black mb-6 tracking-tight">Run Extraction</h2>
                   <div className="space-y-4 mb-8">
-                    <div className="flex items-start gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
-                      <div className="bg-white dark:bg-slate-900 p-2 rounded-lg shadow-sm font-black text-blue-600 text-xs">A</div>
-                      <p className="text-sm font-medium">Login to <span className="text-amber-600 font-bold">Wealthsimple</span> and go to your Account activity.</p>
+                    <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
+                      <div className="bg-amber-500 text-white w-6 h-6 rounded flex items-center justify-center font-black text-[10px]">1</div>
+                      <p className="text-xs font-medium">Open <span className="text-amber-600 font-bold">Wealthsimple</span> activity.</p>
                     </div>
-                    <div className="flex items-start gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
-                      <div className="bg-white dark:bg-slate-900 p-2 rounded-lg shadow-sm font-black text-blue-600 text-xs">B</div>
-                      <p className="text-sm font-medium">Click the <span className="text-amber-600 font-bold">"Magic Sync"</span> bookmark in your bar.</p>
-                    </div>
-                    <div className="flex items-start gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
-                      <div className="bg-white dark:bg-slate-900 p-2 rounded-lg shadow-sm font-black text-blue-600 text-xs">C</div>
-                      <p className="text-sm font-medium">Wait for the <span className="text-emerald-500 font-bold">"Success"</span> box to appear on screen.</p>
+                    <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
+                      <div className="bg-amber-500 text-white w-6 h-6 rounded flex items-center justify-center font-black text-[10px]">2</div>
+                      <p className="text-xs font-medium">Click your new <span className="text-amber-600 font-bold">"Sync"</span> bookmark.</p>
                     </div>
                   </div>
-                  <div className="flex gap-4">
-                    <button onClick={() => setWsStep(1)} className="px-8 py-5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-2xl font-black hover:bg-slate-200 transition-all">Back</button>
-                    <button onClick={() => setWsStep(3)} className="flex-1 bg-slate-900 dark:bg-blue-600 text-white py-5 rounded-2xl font-black text-lg flex items-center justify-center gap-3 shadow-xl">Extraction Complete <ArrowRight className="w-5 h-5"/></button>
+                  <div className="flex gap-3">
+                    <button onClick={() => setWsStep(1)} className="px-6 py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl font-black text-xs">Back</button>
+                    <button onClick={() => setWsStep(3)} className="flex-1 bg-slate-900 dark:bg-blue-600 text-white py-4 rounded-xl font-black text-sm flex items-center justify-center gap-2">Next Step <ArrowRight className="w-4 h-4"/></button>
                   </div>
                 </div>
               )}
 
               {wsStep === 3 && (
                 <div className="animate-in slide-in-from-right duration-300">
-                   <h2 className="text-3xl font-black mb-4 tracking-tight">Consolidate Data</h2>
-                   <p className="text-slate-500 dark:text-slate-400 text-sm mb-6 leading-relaxed">The Magic Sync automatically copied the merchant data. Simply paste (Ctrl+V) it below to merge with your history.</p>
+                   <h2 className="text-2xl font-black mb-3 tracking-tight">Merge Data</h2>
+                   <p className="text-slate-500 dark:text-slate-400 text-xs mb-4 leading-relaxed">The bookmarklet copied your data. Paste it here.</p>
                    <textarea 
                     value={wsPasteContent}
                     onChange={(e) => setWsPasteContent(e.target.value)}
-                    placeholder="Paste the extracted data here..."
-                    className="w-full h-48 bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-[2rem] p-6 text-xs font-mono mb-8 focus:border-amber-500 outline-none shadow-inner resize-none transition-all"
+                    placeholder="Ctrl+V (Paste) here..."
+                    className="w-full h-40 bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-2xl p-4 text-[10px] font-mono mb-6 focus:border-amber-500 outline-none resize-none transition-all"
                    ></textarea>
-                   <div className="flex gap-4">
-                    <button onClick={() => setWsStep(2)} className="px-8 py-5 bg-slate-100 dark:bg-slate-800 text-slate-600 rounded-2xl font-black">Back</button>
+                   <div className="flex gap-3">
+                    <button onClick={() => setWsStep(2)} className="px-6 py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 rounded-xl font-black text-xs">Back</button>
                     <button 
                       onClick={handleWsSync} 
                       disabled={!wsPasteContent.trim()} 
-                      className="flex-1 bg-amber-500 disabled:opacity-30 text-white py-5 rounded-2xl font-black text-lg shadow-xl shadow-amber-200 dark:shadow-none active:scale-95 transition-all"
+                      className="flex-1 bg-amber-500 disabled:opacity-30 text-white py-4 rounded-xl font-black text-sm active:scale-95 transition-all shadow-md"
                     >
-                      Merge Transactions
+                      Complete Sync
                     </button>
                   </div>
                 </div>
               )}
             </div>
-            <div className="p-4 bg-slate-50 dark:bg-slate-800/50 text-center border-t border-slate-100 dark:border-slate-800">
-              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center justify-center gap-2"><Lock className="w-3 h-3" /> Secure Local Environment</span>
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/50 text-center border-t border-slate-100 dark:border-slate-800">
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center justify-center gap-1"><Lock className="w-3 h-3" /> Encrypted Processing</span>
             </div>
           </div>
         </div>

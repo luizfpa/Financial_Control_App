@@ -17,8 +17,15 @@ export const parseAmountToNumber = (amountStr: string): number => {
   return isNaN(val) ? 0 : val;
 };
 
+const MONTH_MAP: Record<string, string> = {
+  'january': 'Jan', 'february': 'Feb', 'march': 'Mar', 'april': 'Apr', 
+  'may': 'May', 'june': 'Jun', 'july': 'Jul', 'august': 'Aug', 
+  'september': 'Sep', 'october': 'Oct', 'november': 'Nov', 'december': 'Dec'
+};
+
 /**
- * Formats dates into "MMM D, YYYY" (e.g., Feb 1, 2026)
+ * Formats dates into "MMM D, YYYY" (e.g., Jan 29, 2026)
+ * Strictly converts relative dates and handles long-form months.
  */
 export const formatDate = (dateStr: string): string => {
   if (!dateStr) return '';
@@ -26,50 +33,101 @@ export const formatDate = (dateStr: string): string => {
   const cleanStr = dateStr.trim().toLowerCase();
   const now = new Date();
 
-  // Handle Relative Dates
-  if (cleanStr === 'today') {
+  // 1. Handle Relative Dates
+  if (cleanStr.includes('today')) {
     return `${monthNames[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
   }
-  if (cleanStr === 'yesterday') {
+  if (cleanStr.includes('yesterday')) {
     const yesterday = new Date();
     yesterday.setDate(now.getDate() - 1);
     return `${monthNames[yesterday.getMonth()]} ${yesterday.getDate()}, ${yesterday.getFullYear()}`;
   }
   
-  // Handle Standard and Long-form Dates (e.g., "February 1, 2026" or "2026-02-01")
-  const parsed = new Date(dateStr);
-  if (!isNaN(parsed.getTime())) {
-    return `${monthNames[parsed.getMonth()]} ${parsed.getDate()}, ${parsed.getFullYear()}`;
-  }
+  // 2. Pre-clean long months
+  let processedStr = dateStr;
+  Object.keys(MONTH_MAP).forEach(long => {
+    const regex = new RegExp(long, 'gi');
+    processedStr = processedStr.replace(regex, MONTH_MAP[long]);
+  });
 
-  // Final Fallback for manual regex (ISO)
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) {
-    const [y, m, d] = dateStr.trim().split('-').map(Number);
-    return `${monthNames[m - 1]} ${d}, ${y}`;
+  // 3. Standard JS Parsing
+  const parsed = new Date(processedStr);
+  if (!isNaN(parsed.getTime())) {
+    let year = parsed.getFullYear();
+    // Heuristic: If parsing results in 2001 (often a default) or if the year seems shifted,
+    // we only trust the year if it was explicitly in the input.
+    const yearMatch = dateStr.match(/\d{4}/);
+    if (yearMatch) {
+      year = parseInt(yearMatch[0], 10);
+    } else if (year === 2001 || (year > now.getFullYear() + 1)) {
+      // If no year in input, but parser produced one far in future or 2001, use current year
+      year = now.getFullYear();
+    }
+    
+    return `${monthNames[parsed.getMonth()]} ${parsed.getDate()}, ${year}`;
   }
 
   return dateStr;
 };
 
+/**
+ * Robust CSV Parser that handles:
+ * 1. Quoted fields ("Dec 31, 2025")
+ * 2. Unquoted fields with commas (Jan 29, 2026 and $2,252.76) via splitting heuristic
+ */
 export const parseCSV = (csvText: string): any[] => {
-  const lines = csvText.trim().split('\n');
+  const lines = csvText.trim().split(/\r?\n/);
   if (lines.length < 1) return [];
-  const rawHeaders = lines[0].split(',');
-  const headers = rawHeaders.map(h => h.trim().replace(/^["']|["']$/g, ''));
-  return lines.slice(1).map(line => {
-    const values = [];
-    let current = '';
+
+  const parseLine = (line: string) => {
+    const row = [];
+    let cur = '';
     let inQuotes = false;
-    for (let char of line) {
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
       if (char === '"') inQuotes = !inQuotes;
-      else if (char === ',' && !inQuotes) { values.push(current.trim()); current = ''; }
-      else { current += char; }
+      else if (char === ',' && !inQuotes) {
+        row.push(cur.trim());
+        cur = '';
+      } else {
+        cur += char;
+      }
     }
-    values.push(current.trim());
+    row.push(cur.trim());
+    return row;
+  };
+
+  const rawHeaders = parseLine(lines[0]);
+  const headers = rawHeaders.map(h => h.trim().replace(/^["']|["']$/g, ''));
+  
+  return lines.slice(1).map(line => {
+    let values = parseLine(line);
+    
+    // HEURISTIC: Fix the unquoted comma issue (Wealthsimple clipboard common case)
+    if (headers.length === 4) {
+      // Step 1: Fix Date split (e.g., "Dec 25" and "2025")
+      if (values.length >= 5 && /^\d{4}$/.test(values[1].trim())) {
+        const mergedDate = `${values[0]}, ${values[1]}`;
+        values.splice(0, 2, mergedDate);
+      }
+      
+      // Step 2: Fix Amount split (e.g., "$2" and "252.76 CAD")
+      // Current values should look like [Date, Description, AmountPart1, AmountPart2, Account]
+      if (values.length === 5) {
+        const p2 = values[2].trim();
+        const p3 = values[3].trim();
+        // If either part contains currency indicators, merge them
+        if (p2.includes('$') || p3.toLowerCase().includes('cad') || /^\d+\.?\d*$/.test(p3)) {
+          const mergedAmt = `${values[2]},${values[3]}`;
+          values.splice(2, 2, mergedAmt);
+        }
+      }
+    }
+
     const entry: any = {};
     headers.forEach((header, index) => {
       let val = values[index] || '';
-      entry[header] = val.replace(/^["']|["']$/g, '');
+      entry[header] = val.trim().replace(/^["']|["']$/g, '');
     });
     return entry;
   });
@@ -79,7 +137,7 @@ export const mergeAndDeduplicate = (allTransactions: ProcessedTransaction[]): Pr
   const seen = new Set<string>();
   const result: ProcessedTransaction[] = [];
   
-  // Sort by date before deduplication to keep the most recent entries
+  // Sort by date (descending)
   allTransactions.sort((a, b) => new Date(b.Date).getTime() - new Date(a.Date).getTime());
   
   allTransactions.forEach(t => {
@@ -95,33 +153,45 @@ export const mergeAndDeduplicate = (allTransactions: ProcessedTransaction[]): Pr
 export type FileOrigin = 'EQ' | 'CIBC' | 'PC' | 'WS' | 'OTHER';
 
 export const processTransactions = (transactions: any[], accountName: string, origin: FileOrigin): ProcessedTransaction[] => {
-  return transactions.map(t => {
-    let rawAmount = t['Amount'] || t['amount'] || '';
-    let numericAmount = parseAmountToNumber(String(rawAmount));
-    
-    // Reverse amounts for CIBC to match spending negative convention
-    if (origin === 'CIBC') numericAmount = -Math.abs(numericAmount);
-    
-    let description = t['Description'] || t['description'] || 'No Description';
-    
-    // Clean description of excess whitespace
-    description = description.replace(/\s+/g, ' ').trim();
+  return transactions
+    .filter(t => {
+      // Clean up description logic for CIBC or any origin
+      const desc = (t['Description'] || t['description'] || '').toUpperCase();
+      
+      // Specifically filter out unwanted CIBC rows as requested
+      if (origin === 'CIBC') {
+        if (desc.includes('ROYAL BANK OF CANADA MONTREAL') || 
+            desc.includes('PAYMENT THANK YOU') || 
+            desc.includes('PAIEMEN T MERCI')) {
+          return false;
+        }
+      }
+      return true;
+    })
+    .map(t => {
+      let rawAmount = t['Amount'] || t['amount'] || '';
+      let numericAmount = parseAmountToNumber(String(rawAmount));
+      
+      if (origin === 'CIBC') numericAmount = -Math.abs(numericAmount);
+      
+      let description = t['Description'] || t['description'] || 'No Description';
+      description = description.replace(/\s+/g, ' ').trim();
 
-    const rawDate = t['Date'] || t['date'] || t['Transfer date'] || '';
-    
-    // Map account source
-    let finalSource = accountName;
-    if (origin === 'WS') {
-      finalSource = 'Wealthsimple';
-    }
-    
-    return {
-      'Date': formatDate(rawDate),
-      'Description': description,
-      'Amount': numericAmount < 0 ? `-$${Math.abs(numericAmount).toFixed(2)}` : `$${numericAmount.toFixed(2)}`,
-      'Account/Card': finalSource
-    };
-  });
+      const rawDate = t['Date'] || t['date'] || t['Transfer date'] || '';
+      
+      let finalSource = accountName;
+      const incomingAccount = (t['Account'] || t['Account/Card'] || '').toLowerCase();
+      if (origin === 'WS' || incomingAccount.includes('wealthsimple')) {
+        finalSource = 'Wealthsimple';
+      }
+      
+      return {
+        'Date': formatDate(rawDate),
+        'Description': description,
+        'Amount': numericAmount < 0 ? `-$${Math.abs(numericAmount).toFixed(2)}` : `$${numericAmount.toFixed(2)}`,
+        'Account/Card': finalSource
+      };
+    });
 };
 
 export const convertToCSV = (data: ProcessedTransaction[]): string => {
