@@ -12,19 +12,13 @@ const categorizeMerchant = (description: string, amount: number): { category: st
   // 1. Any row starting with “Payment to” -> ignore / skip entirely for categorization.
   if (desc.startsWith('payment to')) return null;
 
-  // 2. Internal Transfers & Maternity Leave
-  // Specific case: Maternity Leave (Expanded with new amounts: 1211 and 1257.85)
-  const maternityAmounts = [1246.84, 1252, 1267.59, 1246.00, 1211.00, 1257.85];
-  if (desc.startsWith("transfer from 111431248 to 114728209") || maternityAmounts.includes(absAmount)) {
-    // If it's one of the known maternity amounts, classify as maternity leave income
-    if (maternityAmounts.includes(absAmount)) {
-      return { category: 'Income', subCategory: 'Maternity Leave' };
-    }
-    return { category: 'Transfers', subCategory: 'Internal transfer' };
+  // 2. Specific Person Overrides (PRIORITIZED to prevent incorrect amount-based matches)
+  if (desc.includes('luiz fernando pinheiros de araujo') && amount > 0) {
+    return { 
+      category: 'Transfers', 
+      subCategory: 'Other transfer'
+    };
   }
-
-  // 3. Specific Person Overrides: Luiz Araujo
-  // When amount is positive and Merchant is Luiz Araujo, change to Simplii, category Transfers and subcategory Transfer in
   if (desc.includes('luiz araujo') && amount > 0) {
     return { 
       category: 'Transfers', 
@@ -33,10 +27,26 @@ const categorizeMerchant = (description: string, amount: number): { category: st
     };
   }
 
+  // 3. Internal Transfers & Maternity Leave
+  // Specific case: Maternity Leave logic
+  const maternityAmounts = [1246.84, 1252, 1267.59, 1246.00, 1211.00, 1257.85, 1256.00];
+  
+  // Handle the specific amount threshold logic (1211 negative is transfer, positive is income)
+  if (absAmount === 1211.00 && amount < 0) {
+    return { category: 'Transfers', subCategory: 'Internal transfer' };
+  }
+
+  // Handle Maternity Leave rule: specific transfer strings or known amounts (positive)
+  const isMaternityTransfer = desc.startsWith("transfer from 111431248 to 114728209");
+  if (isMaternityTransfer || (maternityAmounts.includes(absAmount) && amount > 0)) {
+    return { category: 'Income', subCategory: 'Maternity Leave' };
+  }
+
   // General Internal Transfers (other own accounts)
   if (
     desc.startsWith("transfer from 111195544 to 114728209") || 
-    desc.startsWith("transfer from 114728209 to 111195544")
+    desc.startsWith("transfer from 114728209 to 111195544") ||
+    desc.startsWith("transfer from 111431248 to 114728209") // Non-maternity internal transfer
   ) {
     return { category: 'Transfers', subCategory: 'Internal transfer' };
   }
@@ -51,49 +61,27 @@ const categorizeMerchant = (description: string, amount: number): { category: st
     return { category: 'Transfers', subCategory: 'Transfer out (other bank/internal)' };
   }
 
-  // 6. Transfer to PC Financial
-  if (desc.startsWith("transfer to pc financial")) {
-    return { category: 'Debt & credit', subCategory: 'Credit card/line of credit payment (PC Financial)' };
+  // International Transfer Detection
+  if (desc.includes('international transfer')) {
+    return { category: 'Transfers', subCategory: 'International Transfer' };
   }
 
-  // 7. Interac e-Transfer sent to WealthSimple
-  if (desc.startsWith("interac e-transfer sent to wealthsimple")) {
-    return { category: 'Investments', subCategory: 'Transfer out to investments' };
-  }
-
-  // 8. Interac e-Transfer sent to Luiz PC Financial
-  if (desc.startsWith("interac e-transfer sent to luiz pc financial")) {
-    return { category: 'Debt & credit', subCategory: 'Credit card payment (PC Financial via Interac)' };
-  }
-
-  // 9. Interac e-Transfer sent to CIBC
-  if (desc.startsWith("interac e-transfer sent to cibc")) {
-    return { category: 'Debt & credit', subCategory: 'Bank or credit product payment (CIBC)' };
-  }
-
-  // 10. Personal & Beauty
-  if (desc.includes('andreia depila') || desc.includes('dolce lounge')) {
-    return { category: 'Personal', subCategory: 'Beauty' };
-  }
-
-  // 11. Interac e-Transfer sent to other people
-  const people = ["gey", "fernando", "nathalia unha", "simplii nando", "tatiana bassinet", "diaper"];
-  if (people.some(p => desc.startsWith(`interac e-transfer sent to ${p}`))) {
-    return { category: 'Transfers', subCategory: 'Transfer out (to other person)' };
-  }
-
-  // 12. Income: Salary & Interest
+  // 6. Income: Salary, Interest, and Benefits
   if (desc.includes('long view')) {
     return { category: 'Income', subCategory: 'Salary' };
   }
   if (desc.includes("interest")) {
     return { category: 'Income', subCategory: 'Interest' };
   }
+  // New Rule: Direct deposit from CANADA + 295.04 -> Child Benefit
+  if (desc.startsWith("direct deposit from canada") && absAmount === 295.04) {
+    return { category: 'Income', subCategory: 'Child Benefit' };
+  }
   if (desc.startsWith("direct deposit from")) {
     return { category: 'Income', subCategory: 'Direct deposit' };
   }
 
-  // 13. Auto-withdrawals
+  // 7. Auto-withdrawals & Debt
   if (desc.startsWith("auto-withdrawal by rbc loan pymt")) {
     return { category: 'Transport', subCategory: 'Car payment' };
   }
@@ -103,72 +91,82 @@ const categorizeMerchant = (description: string, amount: number): { category: st
   if (desc.startsWith("auto-withdrawal by b c hydro pap")) {
     return { category: 'Household', subCategory: 'Utilities' };
   }
-  if (desc.startsWith("international transfer")) {
-    return { category: 'Transfers', subCategory: 'International transfer out' };
+  if (desc.startsWith("transfer to pc financial")) {
+    return { category: 'Debt & credit', subCategory: 'Credit card/line of credit payment (PC Financial)' };
   }
 
-  // 14. Investments
-  if (desc.includes("gic cancelled")) return { category: 'Investments', subCategory: 'GIC redemption' };
-  if (desc.includes("gic purchase")) return { category: 'Investments', subCategory: 'GIC purchase' };
-
-  // --- RETAIL & MERCHANT RULES ---
-
-  // Transport
-  if (desc.includes('magic wand car wash')) {
-    return { category: 'Transport', subCategory: 'Car wash' };
+  // 8. Retail & Merchant Rules
+  
+  // Costco logic
+  if (desc.includes('costco gas w259')) {
+    return { category: 'Transport', subCategory: 'Gas' };
   }
-  if (desc.includes('icbc')) {
+  if (desc.includes('costco wholesale w259')) {
+    return { category: 'Household', subCategory: 'Groceries' };
+  }
+
+  // Willowbrook Produce
+  if (desc.includes('willowbrook produce')) {
+    return { category: 'Household', subCategory: 'Groceries' };
+  }
+
+  // IKEA
+  if (desc.includes('ikea')) {
+    return { category: 'Household', subCategory: 'Furniture' };
+  }
+
+  // Associated Veterinary
+  if (desc.includes('associated veterinary pur')) {
+    return { category: 'Education', subCategory: 'Vet Validation' };
+  }
+
+  // Fullscript
+  if (desc.includes('fullscript.com')) {
+    return { category: 'Health & Wellness', subCategory: 'Supplement' };
+  }
+
+  // Kim's Coin Laundry
+  if (desc.includes("kim's coin laundry")) {
+    return { category: 'Household', subCategory: 'Laundry' };
+  }
+
+  // Once Upon A Child
+  if (desc.includes('once upon a child')) {
+    return { category: 'Kids', subCategory: 'Clothes/Toys' };
+  }
+
+  // Personal & Beauty
+  if (desc.includes('shoppers')) {
+    return { category: 'Personal', subCategory: 'Health & Personal Care' };
+  }
+  if (desc.includes('andreia depila') || desc.includes('dolce lounge')) {
+    return { category: 'Personal', subCategory: 'Beauty' };
+  }
+
+  // Insurance
+  if (desc.includes('icbc') || desc.includes('max insurance')) {
     return { category: 'Transport', subCategory: 'Car Insurance' };
   }
 
-  // Pets
-  if (desc.includes('associated veterinary pur')) return { category: 'Pets', subCategory: 'Vet services' };
+  // Retail matching...
+  if (desc.includes('magic wand car wash')) return { category: 'Transport', subCategory: 'Car wash' };
   if (desc.includes('homes alive pet centre')) return { category: 'Pets', subCategory: 'Pet supplies' };
-
-  // Health & wellness (Fitness focus)
-  if (desc.includes('fit4less') || desc.includes('club16')) {
-    return { category: 'Health & wellness', subCategory: 'Gym & Club' };
-  }
-  if (desc.includes('fullscript')) return { category: 'Health & wellness', subCategory: 'Supplements/healthcare' };
-  if (desc.includes('aquarius dental')) return { category: 'Health & wellness', subCategory: 'Medical/Dentist' };
-
-  // Education
-  if (desc.includes('zuku learning') || desc.includes('zuku')) return { category: 'Education', subCategory: 'Professional/vet education' };
-
-  // Household (Groceries, Utilities, etc.)
+  if (desc.includes('fit4less') || desc.includes('club16')) return { category: 'Health & wellness', subCategory: 'Gym & Club' };
   if (desc.includes('wal-mart') || desc.includes('walmart')) return { category: 'Household', subCategory: 'Groceries' };
   if (desc.includes('superstore') || desc.includes('real cdn superstore')) return { category: 'Household', subCategory: 'Groceries' };
-  if (desc.includes('t&t supermarket')) return { category: 'Household', subCategory: 'Groceries' };
-  if (desc.includes('willowbrook produce')) return { category: 'Household', subCategory: 'Groceries' };
-  if (desc.includes('dollarama')) return { category: 'Household', subCategory: 'Misc shopping' };
-  if (desc.includes('home depot')) return { category: 'Household', subCategory: 'Hardware' };
-  if (desc.includes('ikea')) return { category: 'Household', subCategory: 'Home goods/furniture' };
-  if (desc.includes("kim's coin laundry")) return { category: 'Household', subCategory: 'Laundry' };
-
-  // Pleasure (Eating out rebranded)
   if (desc.includes('subway')) return { category: 'Pleasure', subCategory: 'Fast food' };
   if (desc.includes('hard bean brunch')) return { category: 'Pleasure', subCategory: 'Restaurant/cafe' };
-  if (desc.includes('firecrust')) return { category: 'Pleasure', subCategory: 'Restaurant' };
-  if (desc.includes('coca cola coquitlam')) return { category: 'Pleasure', subCategory: 'Drinks/snacks' };
 
-  // Personal Care & Kids
-  if (desc.includes('great clips')) return { category: 'Personal', subCategory: 'Haircut' };
-  if (desc.includes('once upon a child')) return { category: 'Kids', subCategory: 'Second-hand kids items' };
-
-  // Shopping (General Retail)
-  if (desc.includes('michaels') || desc.includes('staples')) {
-    return { category: 'Shopping', subCategory: 'Crafts/School' };
-  }
-  if (desc.includes('adidas')) return { category: 'Shopping', subCategory: 'Clothing/shoes' };
-  if (desc.includes('kerrisdale') || desc.includes('kerrisdalec')) return { category: 'Shopping', subCategory: 'Clothing/retail' };
-  if (desc.includes('aliexpress')) return { category: 'Shopping', subCategory: 'Online (AliExpress)' };
-
-  // Amazon/Temu logic
+  // Aliexpress / Amazon / Temu
+  const isAliexpress = desc.includes('aliexpress');
   const isAmazon = desc.includes('amazon');
   const isTemu = desc.includes('temu.com');
+
+  if (isAliexpress && amount < 0) return { category: 'Shopping', subCategory: 'Online (Aliexpress)' };
   if (isTemu && amount < 0) return { category: 'Household', subCategory: 'Misc shopping' };
   if (isAmazon && amount < 0) return { category: 'Shopping', subCategory: 'Online (Amazon)' };
-  if ((isAmazon || isTemu) && amount >= 0) return { category: 'Shopping', subCategory: 'Refund/credit' };
+  
+  if ((isAmazon || isTemu || isAliexpress) && amount >= 0) return { category: 'Shopping', subCategory: 'Refund/credit' };
 
   // --- FINAL DEFAULT ---
   return { category: 'Transfers', subCategory: 'Other transfer' };
@@ -199,12 +197,6 @@ export const parseAmountToNumber = (amountStr: string): number => {
   return isNaN(val) ? 0 : val * multiplier;
 };
 
-const MONTH_MAP: Record<string, string> = {
-  'january': 'Jan', 'february': 'Feb', 'march': 'Mar', 'april': 'Apr', 
-  'may': 'May', 'june': 'Jun', 'july': 'Jul', 'august': 'Aug', 
-  'september': 'Sep', 'october': 'Oct', 'november': 'Nov', 'december': 'Dec'
-};
-
 export const formatDate = (dateStr: string): string => {
   if (!dateStr) return '';
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -218,19 +210,9 @@ export const formatDate = (dateStr: string): string => {
     return `${monthNames[yesterday.getMonth()]} ${yesterday.getDate()}, ${yesterday.getFullYear()}`;
   }
   
-  let processedStr = dateStr;
-  Object.keys(MONTH_MAP).forEach(long => {
-    const regex = new RegExp(long, 'gi');
-    processedStr = processedStr.replace(regex, MONTH_MAP[long]);
-  });
-
-  const parsed = new Date(processedStr);
+  const parsed = new Date(dateStr);
   if (!isNaN(parsed.getTime())) {
-    let year = parsed.getFullYear();
-    const yearMatch = dateStr.match(/\d{4}/);
-    if (yearMatch) year = parseInt(yearMatch[0], 10);
-    else if (year === 2001 || (year > now.getFullYear() + 1)) year = now.getFullYear();
-    return `${monthNames[parsed.getMonth()]} ${parsed.getDate()}, ${year}`;
+    return `${monthNames[parsed.getMonth()]} ${parsed.getDate()}, ${parsed.getFullYear()}`;
   }
   return dateStr;
 };
@@ -262,22 +244,6 @@ export const parseCSV = (csvText: string): any[] => {
   
   return lines.slice(1).map(line => {
     let values = parseLine(line);
-    
-    if (headers.length === 4) {
-      if (values.length >= 5 && /^\d{4}$/.test(values[1].trim())) {
-        const mergedDate = `${values[0]}, ${values[1]}`;
-        values.splice(0, 2, mergedDate);
-      }
-      if (values.length === 5) {
-        const p2 = values[2].trim();
-        const p3 = values[3].trim();
-        if (p2.includes('$') || p3.toLowerCase().includes('cad') || /^\d+\.?\d*$/.test(p3)) {
-          const mergedAmt = `${values[2]},${values[3]}`;
-          values.splice(2, 2, mergedAmt);
-        }
-      }
-    }
-
     const entry: any = {};
     headers.forEach((header, index) => {
       let val = values[index] || '';

@@ -65,7 +65,7 @@ const App: React.FC = () => {
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [wsStep, setWsStep] = useState<1 | 2 | 3>(1);
   const [wsPasteContent, setWsPasteContent] = useState("");
-  const [copyFeedback, setCopyFeedback] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState<null | 'cc' | 'chequing'>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -79,7 +79,7 @@ const App: React.FC = () => {
     }
   }, [isDarkMode]);
 
-  const magicSyncCode = useMemo(() => {
+  const magicSyncCodeCC = useMemo(() => {
     const code = `javascript:(async function(){
       const notify = (msg, color="#3b82f6") => {
         let div = document.getElementById('ws-sync-status');
@@ -154,6 +154,10 @@ const App: React.FC = () => {
     return code.replace(/\s+/g, ' ');
   }, []);
 
+  const chequingSyncCode = useMemo(() => {
+    return `javascript:(async function(){ const notify = (msg, color="#3b82f6") => { let div = document.getElementById('ws-sync-status'); if(!div){ div = document.createElement('div'); div.id = 'ws-sync-status'; div.style = 'position:fixed;bottom:30px;right:30px;z-index:999999;padding:20px 30px;border-radius:20px;color:white;font-weight:900;font-family:sans-serif;box-shadow:0 20px 50px rgba(0,0,0,0.3);transition:all 0.3s;font-size:16px;'; document.body.appendChild(div); } div.style.backgroundColor = color; div.innerText = msg; }; notify("🚀 Chequing Sync Active - Loading History..."); let lastHeight = document.body.scrollHeight; for(let i=0; i<30; i++){ window.scrollTo(0, document.body.scrollHeight); await new Promise(r => setTimeout(r, 600)); let newHeight = document.body.scrollHeight; if(newHeight === lastHeight) break; lastHeight = newHeight; notify("⏳ Scrolling ("+(i+1)+"/30)..."); } const rows = []; const seenTransactions = new Set(); const dateHeaders = Array.from(document.querySelectorAll('h2')); dateHeaders.forEach((header, headerIndex) => { const dateText = header.innerText.trim(); if(dateText === 'Filters' || dateText.length === 0) return; const nextHeader = headerIndex + 1 < dateHeaders.length ? dateHeaders[headerIndex + 1] : null; let scanElement = header.nextElementSibling; while(scanElement && scanElement !== nextHeader) { const button = scanElement.tagName === 'BUTTON' ? scanElement : scanElement.querySelector('button'); if(button && button.innerText.includes('$')) { const fullText = button.innerText.trim(); const lines = fullText.split('\\n').map(l => l.trim()).filter(l => l.length > 0); if(lines.length >= 2) { let description = ""; let amount = ""; let type = "Transaction"; for(let i = 0; i < lines.length; i++) { const line = lines[i]; if(line.match(/[\\$\\-\\+][\\d\\,\\.]+\\s*[A-Z]{3}/)) { amount = line; } else if(line.toLowerCase().includes('transfer') || line.toLowerCase().includes('deposit') || line.toLowerCase().includes('withdrawal') || line.toLowerCase().includes('payment') || line.toLowerCase().includes('e-transfer') || line.toLowerCase().includes('interac') || line.toLowerCase().includes('direct deposit') || line.toLowerCase().includes('pre-authorized debit')) { type = line; } else if(line.toLowerCase().includes('chequing') || line.toLowerCase().includes('investment') || line.toLowerCase().includes('tfsa') || line.toLowerCase().includes('account') || line.toLowerCase().includes('dia a dia')) { continue; } else if(!description && line.length > 2 && !line.match(/^\\d+$/) && !line.includes('•')) { description = line; } } if(amount && description && dateText) { const key = \`\${dateText}|\${description}|\${amount}\`.toLowerCase(); if(!seenTransactions.has(key)) { seenTransactions.add(key); rows.push({ Date: dateText, Description: description, Type: type, Amount: amount, Account: "Wealthsimple Chequing" }); } } } } scanElement = scanElement.nextElementSibling; } }); if(rows.length === 0) { notify("❌ No transactions found! Try scrolling manually first.", "#ef4444"); return; } const csv = "Date,Description,Type,Amount,Account\\n" + rows.map(r => \`"\${r.Date}","\${r.Description}","\${r.Type}","\${r.Amount}","\${r.Account}"\`).join("\\n"); const copyToClipboard = (text) => { const el = document.createElement('textarea'); el.value = text; el.style.position = 'absolute'; el.style.left = '-9999px'; document.body.appendChild(el); el.select(); const success = document.execCommand('copy'); document.body.removeChild(el); return success; }; if(copyToClipboard(csv)) { notify("✅ Success! " + rows.length + " items copied.", "#10b981"); } else { console.log(csv); notify("⚠️ Copy Blocked - Check Console (F12)", "#f59e0b"); } })();`.replace(/\s+/g, ' ');
+  }, []);
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement> | { target: { files: FileList | null } }) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -197,7 +201,7 @@ const App: React.FC = () => {
     if (!wsPasteContent.trim()) return;
     setIsProcessing(true);
     const parsed = parseCSV(wsPasteContent);
-    const processed = processTransactions(parsed, "Wealthsimple Card", 'WS');
+    const processed = processTransactions(parsed, "Wealthsimple Account", 'WS');
     if (processed.length > 0) {
       setProcessedData(mergeAndDeduplicate([...processedData, ...processed]));
       setFileStatuses(prev => [...prev, {
@@ -231,10 +235,11 @@ const App: React.FC = () => {
     return items;
   }, [processedData, sortConfig]);
 
-  const copyScriptFallback = () => {
-    navigator.clipboard.writeText(magicSyncCode);
-    setCopyFeedback(true);
-    setTimeout(() => setCopyFeedback(false), 2000);
+  const copyScript = (type: 'cc' | 'chequing') => {
+    const code = type === 'cc' ? magicSyncCodeCC : chequingSyncCode;
+    navigator.clipboard.writeText(code);
+    setCopyFeedback(type);
+    setTimeout(() => setCopyFeedback(null), 2000);
   };
 
   return (
@@ -352,7 +357,6 @@ const App: React.FC = () => {
               
               <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
                 <div className="lg:col-span-3">
-                  {/* Additional stats or charts could go here */}
                 </div>
                 <div className="lg:col-span-1">
                   <div className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-xl border border-slate-200 dark:border-slate-800 p-8 text-center overflow-hidden">
@@ -418,9 +422,12 @@ const App: React.FC = () => {
                 <div className="animate-in slide-in-from-right duration-300 text-center">
                   <h2 className="text-2xl font-black mb-3 tracking-tight text-left">Wealthsimple Sync</h2>
                   <p className="text-slate-500 dark:text-slate-400 text-xs mb-8 leading-relaxed text-left">Copy the sync code below and create a bookmark manually in your browser with this code as the URL.</p>
-                  <div className="mb-8">
-                    <button onClick={copyScriptFallback} className="w-full flex items-center justify-center gap-2 px-4 py-4 rounded-xl bg-slate-900 dark:bg-blue-600 text-white font-black text-sm transition-all shadow-xl active:scale-95 hover:bg-slate-800 dark:hover:bg-blue-700">
-                      <Copy className="w-5 h-5" /> {copyFeedback ? 'Copied Successfully!' : 'Copy Sync Code'}
+                  <div className="space-y-3 mb-8">
+                    <button onClick={() => copyScript('chequing')} className="w-full flex items-center justify-center gap-2 px-4 py-4 rounded-xl bg-slate-900 dark:bg-blue-600 text-white font-black text-sm transition-all shadow-xl active:scale-95 hover:bg-slate-800 dark:hover:bg-blue-700">
+                      <Copy className="w-5 h-5" /> {copyFeedback === 'chequing' ? 'Copied Chequing Code!' : 'Copy Sync Code for Chequing Account'}
+                    </button>
+                    <button onClick={() => copyScript('cc')} className="w-full flex items-center justify-center gap-2 px-4 py-4 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-black text-sm transition-all border border-slate-200 dark:border-slate-700 active:scale-95 hover:bg-slate-200 dark:hover:bg-slate-700">
+                      <Copy className="w-5 h-5" /> {copyFeedback === 'cc' ? 'Copied Credit Card Code!' : 'Copy Sync Code for Credit Card'}
                     </button>
                   </div>
                   <button onClick={() => setWsStep(2)} className="w-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 py-4 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:bg-slate-200 transition-all border border-slate-200 dark:border-slate-700">
