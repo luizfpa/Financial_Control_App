@@ -9,6 +9,8 @@ export interface Transaction {
 export interface ProcessedTransaction {
   'Date': string;
   'Description': string;
+  'Category': string;
+  'SubCategory': string;
   'Amount': string;
   'Account/Card': string;
 }

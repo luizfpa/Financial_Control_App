@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { 
   FileText, 
@@ -30,7 +31,8 @@ import {
   Star,
   Loader2,
   Table,
-  Plus
+  Plus,
+  Tag
 } from 'lucide-react';
 import { Transaction, ProcessedTransaction, AiSummary, FileStatus } from './types';
 import { 
@@ -165,19 +167,10 @@ const App: React.FC = () => {
         let accountName = "Other";
         let origin: FileOrigin = 'OTHER';
         
-        if (fileNameUpper.includes('EQ')) { 
-          accountName = "EQ Bank"; 
-          origin = 'EQ'; 
-        } else if (fileNameUpper.includes('CIBC')) { 
-          accountName = "CIBC"; 
-          origin = 'CIBC'; 
-        } else if (fileNameUpper.includes('WS')) { 
-          accountName = "Wealthsimple"; 
-          origin = 'WS'; 
-        } else if (fileNameUpper.startsWith('PC_')) { 
-          accountName = "PC Financial"; 
-          origin = 'PC'; 
-        }
+        if (fileNameUpper.includes('EQ')) { accountName = "EQ Bank"; origin = 'EQ'; } 
+        else if (fileNameUpper.includes('CIBC')) { accountName = "CIBC"; origin = 'CIBC'; } 
+        else if (fileNameUpper.includes('WS')) { accountName = "Wealthsimple"; origin = 'WS'; } 
+        else if (fileNameUpper.startsWith('PC_')) { accountName = "PC Financial"; origin = 'PC'; }
         
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -255,16 +248,10 @@ const App: React.FC = () => {
             <h1 className="text-xl font-black tracking-tight">Micro-Nudge Daily <span className="text-blue-600">Coach</span></h1>
           </div>
           <div className="flex items-center gap-3">
-            <button 
-              onClick={() => fileInputRef.current?.click()} 
-              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs transition-all border border-slate-200 dark:border-slate-700 shadow-sm"
-            >
+            <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs transition-all border border-slate-200 dark:border-slate-700 shadow-sm">
               <Plus className="w-4 h-4" /> Add Statements
             </button>
-            <button 
-              onClick={() => setShowConnectModal(true)} 
-              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs transition-all shadow-md active:scale-95"
-            >
+            <button onClick={() => setShowConnectModal(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs transition-all shadow-md active:scale-95">
               <Link2 className="w-4 h-4" /> Wealthsimple
             </button>
             <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all">
@@ -285,24 +272,14 @@ const App: React.FC = () => {
               <h2 className="text-4xl font-black mb-4 tracking-tight">Financial Auditor</h2>
               <p className="text-slate-500 dark:text-slate-400 mb-10 text-lg max-w-md mx-auto">Merge your bank statements and visualize your spending habits.</p>
               <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                <button 
-                  onClick={() => fileInputRef.current?.click()} 
-                  className="bg-slate-900 dark:bg-blue-600 hover:bg-slate-800 dark:hover:bg-blue-700 text-white px-10 py-5 rounded-2xl font-black text-lg shadow-xl transition-all active:scale-95"
-                >
-                  Upload CSVs
-                </button>
-                <button 
-                  onClick={() => setShowConnectModal(true)} 
-                  className="bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white px-10 py-5 rounded-2xl font-black text-lg shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all active:scale-95"
-                >
-                  Magic Sync
-                </button>
+                <button onClick={() => fileInputRef.current?.click()} className="bg-slate-900 dark:bg-blue-600 hover:bg-slate-800 dark:hover:bg-blue-700 text-white px-10 py-5 rounded-2xl font-black text-lg shadow-xl transition-all active:scale-95">Upload CSVs</button>
+                <button onClick={() => setShowConnectModal(true)} className="bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white px-10 py-5 rounded-2xl font-black text-lg shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-all active:scale-95">Magic Sync</button>
               </div>
             </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 animate-in slide-in-from-bottom duration-500">
-            <div className="lg:col-span-3 space-y-6">
+            <div className="lg:col-span-4 space-y-6">
               <section className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
                 <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/20">
                   <div className="flex items-center gap-3">
@@ -330,28 +307,41 @@ const App: React.FC = () => {
                   <table className="w-full text-left text-sm border-collapse">
                     <thead className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-md sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800">
                       <tr>
-                        <th className="px-8 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em] cursor-pointer group" onClick={() => setSortConfig({ key: 'Date', direction: sortConfig?.direction === 'asc' ? 'desc' : 'asc' })}>
+                        <th className="px-6 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em] cursor-pointer group" onClick={() => setSortConfig({ key: 'Date', direction: sortConfig?.direction === 'asc' ? 'desc' : 'asc' })}>
                           <span className="flex items-center gap-2">Date {sortConfig?.key === 'Date' ? (sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3"/> : <ChevronDown className="w-3 h-3"/>) : <ArrowUpDown className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity"/>}</span>
                         </th>
-                        <th className="px-8 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em]">Source</th>
-                        <th className="px-8 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em]">Merchant</th>
-                        <th className="px-8 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em] text-right">Amount</th>
+                        <th className="px-6 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em]">Source</th>
+                        <th className="px-6 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em]">Merchant</th>
+                        <th className="px-6 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em]">Category</th>
+                        <th className="px-6 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em]">Sub-category</th>
+                        <th className="px-6 py-5 font-bold text-slate-400 uppercase text-[10px] tracking-[0.2em] text-right">Amount</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
                       {sortedData.map((row, idx) => {
                         const isWS = row['Account/Card'].includes('Wealthsimple');
                         const isNeg = row.Amount.includes('-');
+                        const catColor = row.Category === 'Uncategorized' ? 'text-slate-400 border-slate-100 bg-slate-50 dark:bg-slate-800/50 dark:border-slate-800' : 'text-blue-500 border-blue-100 bg-blue-50/50 dark:bg-blue-900/20 dark:border-blue-900/30';
                         return (
                           <tr key={idx} className="group hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                            <td className="px-8 py-5 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">{row.Date}</td>
-                            <td className="px-8 py-5">
-                              <span className={`whitespace-nowrap px-3 py-1 rounded-lg text-[10px] font-black uppercase border tracking-wider ${isWS ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 border-amber-100 dark:border-amber-900' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 border-blue-100 dark:border-blue-900'}`}>
+                            <td className="px-6 py-5 text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">{row.Date}</td>
+                            <td className="px-6 py-5">
+                              <span className={`whitespace-nowrap px-2 py-1 rounded-lg text-[10px] font-black uppercase border tracking-wider ${isWS ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 border-amber-100 dark:border-amber-900' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 border-blue-100 dark:border-blue-900'}`}>
                                 {row['Account/Card']}
                               </span>
                             </td>
-                            <td className="px-8 py-5 font-bold text-slate-800 dark:text-slate-100 text-base">{row.Description}</td>
-                            <td className={`px-8 py-5 text-right font-black text-base ${isNeg ? 'text-rose-500' : 'text-emerald-500'}`}>{row.Amount}</td>
+                            <td className="px-6 py-5 font-bold text-slate-800 dark:text-slate-100 text-base">{row.Description}</td>
+                            <td className="px-6 py-5">
+                              <span className={`whitespace-nowrap px-2 py-1 rounded-lg text-[10px] font-black uppercase border tracking-wider ${catColor}`}>
+                                {row.Category}
+                              </span>
+                            </td>
+                            <td className="px-6 py-5">
+                              <span className="text-xs text-slate-500 dark:text-slate-400 italic">
+                                {row.SubCategory}
+                              </span>
+                            </td>
+                            <td className={`px-6 py-5 text-right font-black text-base ${isNeg ? 'text-rose-500' : 'text-emerald-500'}`}>{row.Amount}</td>
                           </tr>
                         );
                       })}
@@ -359,45 +349,45 @@ const App: React.FC = () => {
                   </table>
                 </div>
               </section>
-            </div>
-            <div className="space-y-6">
-               <div className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-xl border border-slate-200 dark:border-slate-800 p-8 text-center sticky top-24 overflow-hidden">
-                  <div className="absolute top-0 right-0 p-4 opacity-10">
-                    <Sparkles className="w-20 h-20 text-blue-600" />
-                  </div>
-                  <h4 className="font-black text-xl mb-3 tracking-tight">AI Insights</h4>
-                  <p className="text-slate-500 dark:text-slate-400 text-sm mb-8">Analyze spending patterns with AI.</p>
-                  
-                  {isAnalyzing ? (
-                    <div className="flex flex-col items-center py-10">
-                      <Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-4" />
-                      <p className="font-bold text-slate-600 animate-pulse text-sm">Analyzing transactions...</p>
+              
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                <div className="lg:col-span-3">
+                  {/* Additional stats or charts could go here */}
+                </div>
+                <div className="lg:col-span-1">
+                  <div className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-xl border border-slate-200 dark:border-slate-800 p-8 text-center overflow-hidden">
+                    <div className="absolute top-0 right-0 p-4 opacity-10">
+                      <Sparkles className="w-20 h-20 text-blue-600" />
                     </div>
-                  ) : aiSummary ? (
-                    <div className="text-left space-y-6 animate-in fade-in duration-500">
-                      <div>
-                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Summary</span>
-                        <p className="text-sm leading-relaxed mt-2 text-slate-700 dark:text-slate-300">{aiSummary.overview}</p>
+                    <h4 className="font-black text-xl mb-3 tracking-tight">AI Insights</h4>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm mb-8">Analyze spending patterns with AI.</p>
+                    {isAnalyzing ? (
+                      <div className="flex flex-col items-center py-10">
+                        <Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-4" />
+                        <p className="font-bold text-slate-600 animate-pulse text-sm">Analyzing transactions...</p>
                       </div>
-                      <div className="bg-slate-900 dark:bg-slate-800 p-5 rounded-2xl border border-blue-900/30">
-                        <span className="text-[10px] font-black uppercase text-blue-400 tracking-widest">Savings Goal</span>
-                        <p className="text-xs italic text-white/90 mt-2">"{aiSummary.savingsAdvice}"</p>
+                    ) : aiSummary ? (
+                      <div className="text-left space-y-6 animate-in fade-in duration-500">
+                        <div>
+                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Summary</span>
+                          <p className="text-sm leading-relaxed mt-2 text-slate-700 dark:text-slate-300">{aiSummary.overview}</p>
+                        </div>
+                        <div className="bg-slate-900 dark:bg-slate-800 p-5 rounded-2xl border border-blue-900/30">
+                          <span className="text-[10px] font-black uppercase text-blue-400 tracking-widest">Savings Goal</span>
+                          <p className="text-xs italic text-white/90 mt-2">"{aiSummary.savingsAdvice}"</p>
+                        </div>
+                        <button onClick={() => setAiSummary(null)} className="w-full text-slate-400 text-[10px] font-black uppercase hover:text-blue-600 transition-colors">Refresh Analysis</button>
                       </div>
-                      <button onClick={() => setAiSummary(null)} className="w-full text-slate-400 text-[10px] font-black uppercase hover:text-blue-600 transition-colors">Refresh Analysis</button>
-                    </div>
-                  ) : (
-                    <button 
-                      onClick={async () => {
+                    ) : (
+                      <button onClick={async () => {
                         setIsAnalyzing(true);
                         setAiSummary(await getFinancialSummary(processedData));
                         setIsAnalyzing(false);
-                      }} 
-                      className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black text-lg shadow-lg shadow-blue-200 dark:shadow-none transition-all active:scale-95"
-                    >
-                      Audit Spendings
-                    </button>
-                  )}
-               </div>
+                      }} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-black text-lg shadow-lg shadow-blue-200 dark:shadow-none transition-all active:scale-95">Audit Spendings</button>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -414,7 +404,6 @@ const App: React.FC = () => {
                 </div>
                 <button onClick={() => setShowConnectModal(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"><XCircle className="w-6 h-6 text-slate-300" /></button>
               </div>
-
               <div className="flex items-center gap-2 mb-8">
                 {[1, 2, 3].map(step => (
                   <React.Fragment key={step}>
@@ -425,30 +414,20 @@ const App: React.FC = () => {
                   </React.Fragment>
                 ))}
               </div>
-
               {wsStep === 1 && (
                 <div className="animate-in slide-in-from-right duration-300 text-center">
                   <h2 className="text-2xl font-black mb-3 tracking-tight text-left">Wealthsimple Sync</h2>
-                  <p className="text-slate-500 dark:text-slate-400 text-xs mb-8 leading-relaxed text-left">
-                    Copy the sync code below and create a bookmark manually in your browser with this code as the URL.
-                  </p>
-                  
+                  <p className="text-slate-500 dark:text-slate-400 text-xs mb-8 leading-relaxed text-left">Copy the sync code below and create a bookmark manually in your browser with this code as the URL.</p>
                   <div className="mb-8">
-                    <button 
-                      onClick={copyScriptFallback}
-                      className="w-full flex items-center justify-center gap-2 px-4 py-4 rounded-xl bg-slate-900 dark:bg-blue-600 text-white font-black text-sm transition-all shadow-xl active:scale-95 hover:bg-slate-800 dark:hover:bg-blue-700"
-                    >
-                      <Copy className="w-5 h-5" />
-                      {copyFeedback ? 'Copied Successfully!' : 'Copy Sync Code'}
+                    <button onClick={copyScriptFallback} className="w-full flex items-center justify-center gap-2 px-4 py-4 rounded-xl bg-slate-900 dark:bg-blue-600 text-white font-black text-sm transition-all shadow-xl active:scale-95 hover:bg-slate-800 dark:hover:bg-blue-700">
+                      <Copy className="w-5 h-5" /> {copyFeedback ? 'Copied Successfully!' : 'Copy Sync Code'}
                     </button>
                   </div>
-
                   <button onClick={() => setWsStep(2)} className="w-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 py-4 rounded-xl font-black text-sm flex items-center justify-center gap-2 hover:bg-slate-200 transition-all border border-slate-200 dark:border-slate-700">
                     I've Added It <ArrowRight className="w-4 h-4"/>
                   </button>
                 </div>
               )}
-
               {wsStep === 2 && (
                 <div className="animate-in slide-in-from-right duration-300">
                   <h2 className="text-2xl font-black mb-6 tracking-tight">Run Extraction</h2>
@@ -468,26 +447,14 @@ const App: React.FC = () => {
                   </div>
                 </div>
               )}
-
               {wsStep === 3 && (
                 <div className="animate-in slide-in-from-right duration-300">
                    <h2 className="text-2xl font-black mb-3 tracking-tight">Merge Data</h2>
                    <p className="text-slate-500 dark:text-slate-400 text-xs mb-4 leading-relaxed">The bookmarklet copied your data. Paste it here.</p>
-                   <textarea 
-                    value={wsPasteContent}
-                    onChange={(e) => setWsPasteContent(e.target.value)}
-                    placeholder="Ctrl+V (Paste) here..."
-                    className="w-full h-40 bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-2xl p-4 text-[10px] font-mono mb-6 focus:border-amber-500 outline-none resize-none transition-all"
-                   ></textarea>
+                   <textarea value={wsPasteContent} onChange={(e) => setWsPasteContent(e.target.value)} placeholder="Ctrl+V (Paste) here..." className="w-full h-40 bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-2xl p-4 text-[10px] font-mono mb-6 focus:border-amber-500 outline-none resize-none transition-all"></textarea>
                    <div className="flex gap-3">
                     <button onClick={() => setWsStep(2)} className="px-6 py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 rounded-xl font-black text-xs">Back</button>
-                    <button 
-                      onClick={handleWsSync} 
-                      disabled={!wsPasteContent.trim()} 
-                      className="flex-1 bg-amber-500 disabled:opacity-30 text-white py-4 rounded-xl font-black text-sm active:scale-95 transition-all shadow-md"
-                    >
-                      Complete Sync
-                    </button>
+                    <button onClick={handleWsSync} disabled={!wsPasteContent.trim()} className="flex-1 bg-amber-500 disabled:opacity-30 text-white py-4 rounded-xl font-black text-sm active:scale-95 transition-all shadow-md">Complete Sync</button>
                   </div>
                 </div>
               )}
