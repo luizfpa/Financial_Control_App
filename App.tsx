@@ -32,9 +32,21 @@ import {
   Loader2,
   Table,
   Plus,
-  Tag
+  Tag,
+  LayoutDashboard,
+  Calendar,
+  ArrowUpRight,
+  ArrowDownRight,
+  PieChart as PieChartIcon,
+  TrendingUp,
+  Activity
 } from 'lucide-react';
-import { Transaction, ProcessedTransaction, AiSummary, FileStatus } from './types';
+import { 
+  PieChart, Pie, Cell, 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  LineChart, Line, AreaChart, Area
+} from 'recharts';
+import { ProcessedTransaction, AiSummary, FileStatus } from './types';
 import { 
   parseCSV, 
   processTransactions, 
@@ -45,13 +57,30 @@ import {
 } from './utils/csvProcessor';
 import { getFinancialSummary } from './services/geminiService';
 
+type ViewMode = 'audit' | 'dashboard';
 type SortConfig = {
   key: keyof ProcessedTransaction;
   direction: 'asc' | 'desc';
 } | null;
 
+const CATEGORY_COLORS: Record<string, string> = {
+  'Household': '#3b82f6', // blue
+  'Transport': '#a855f7', // purple
+  'Income': '#10b981',    // emerald
+  'Personal': '#ec4899',  // pink
+  'Shopping': '#f59e0b',  // amber
+  'Pleasure': '#f43f5e',  // rose
+  'Pets': '#8b5cf6',      // violet
+  'Health & wellness': '#06b6d4', // cyan
+  'Transfers': '#64748b', // slate
+  'Education': '#fbbf24', // yellow
+  'Kids': '#fb7185',      // rose-light
+  'Debt & credit': '#ef4444' // red
+};
+
 const App: React.FC = () => {
   const [processedData, setProcessedData] = useState<ProcessedTransaction[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>('audit');
   const [isProcessing, setIsProcessing] = useState(false);
   const [fileStatuses, setFileStatuses] = useState<FileStatus[]>([]);
   const [aiSummary, setAiSummary] = useState<AiSummary | null>(null);
@@ -78,6 +107,90 @@ const App: React.FC = () => {
       localStorage.setItem('theme', 'light');
     }
   }, [isDarkMode]);
+
+  // Data Aggregations
+  const dashboardStats = useMemo(() => {
+    if (processedData.length === 0) return null;
+
+    let totalIncome = 0;
+    let totalExpenses = 0;
+    const categoryTotals: Record<string, number> = {};
+    const subCategoryTotals: Record<string, { amount: number, category: string }> = {};
+    const monthlyTrends: Record<string, { income: number, expenses: number }> = {};
+    
+    let fixedExpenses = 0;
+    let variableExpenses = 0;
+
+    // Classification lists
+    const fixedSubCats = ['Rent/strata', 'Utilities', 'Car payment', 'Car Insurance', 'Gym & Club', 'Vet validation'];
+
+    processedData.forEach(t => {
+      const amt = parseAmountToNumber(t.Amount);
+      const date = new Date(t.Date);
+      const monthKey = date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+
+      if (!monthlyTrends[monthKey]) monthlyTrends[monthKey] = { income: 0, expenses: 0 };
+
+      // Handle Income (Skip Transfers in income calculation)
+      if (t.Category === 'Income' || amt > 0) {
+        if (t.Category !== 'Transfers') {
+          totalIncome += Math.abs(amt);
+          monthlyTrends[monthKey].income += Math.abs(amt);
+        }
+      } 
+      // Handle Expenses (Explicitly skip Transfers for the dashboard/charts)
+      else if (t.Category !== 'Transfers') {
+        const expenseAmt = Math.abs(amt);
+        totalExpenses += expenseAmt;
+        monthlyTrends[monthKey].expenses += expenseAmt;
+
+        // Category breakdown for Pie Chart
+        categoryTotals[t.Category] = (categoryTotals[t.Category] || 0) + expenseAmt;
+        
+        // Sub-category top list
+        const subKey = t.SubCategory;
+        if (!subCategoryTotals[subKey]) subCategoryTotals[subKey] = { amount: 0, category: t.Category };
+        subCategoryTotals[subKey].amount += expenseAmt;
+
+        // Fixed vs Variable
+        if (fixedSubCats.some(f => t.SubCategory.includes(f))) {
+          fixedExpenses += expenseAmt;
+        } else {
+          variableExpenses += expenseAmt;
+        }
+      }
+    });
+
+    const pieData = Object.entries(categoryTotals)
+      .map(([name, value]) => ({ name, value, color: CATEGORY_COLORS[name] || '#ccc' }))
+      .sort((a, b) => b.value - a.value);
+
+    const trendData = Object.entries(monthlyTrends)
+      .map(([month, data]) => ({ month, ...data }))
+      .sort((a, b) => {
+        const parseDate = (s: string) => {
+          const [m, y] = s.split(' ');
+          return new Date(`${m} 1, 20${y}`).getTime();
+        };
+        return parseDate(a.month) - parseDate(b.month);
+      });
+
+    const topSubCategories = Object.entries(subCategoryTotals)
+      .map(([name, data]) => ({ name, ...data }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 10);
+
+    return {
+      totalIncome,
+      totalExpenses,
+      pieData,
+      trendData,
+      topSubCategories,
+      fixedExpenses,
+      variableExpenses,
+      netCashFlow: totalIncome - totalExpenses
+    };
+  }, [processedData]);
 
   const magicSyncCodeCC = useMemo(() => {
     const code = `javascript:(async function(){
@@ -242,6 +355,8 @@ const App: React.FC = () => {
     setTimeout(() => setCopyFeedback(null), 2000);
   };
 
+  const formatCurrency = (val: number) => `$${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pb-20 transition-colors">
       <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-30">
@@ -253,6 +368,22 @@ const App: React.FC = () => {
             <h1 className="text-xl font-black tracking-tight">Micro-Nudge Daily <span className="text-blue-600">Coach</span></h1>
           </div>
           <div className="flex items-center gap-3">
+            {processedData.length > 0 && (
+              <div className="flex p-1 bg-slate-100 dark:bg-slate-800 rounded-xl mr-2">
+                <button 
+                  onClick={() => setViewMode('audit')}
+                  className={`px-3 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${viewMode === 'audit' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600' : 'text-slate-500'}`}
+                >
+                  <Table className="w-3.5 h-3.5" /> Audit
+                </button>
+                <button 
+                  onClick={() => setViewMode('dashboard')}
+                  className={`px-3 py-1 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${viewMode === 'dashboard' ? 'bg-white dark:bg-slate-700 shadow-sm text-blue-600' : 'text-slate-500'}`}
+                >
+                  <LayoutDashboard className="w-3.5 h-3.5" /> Dashboard
+                </button>
+              </div>
+            )}
             <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-bold text-xs transition-all border border-slate-200 dark:border-slate-700 shadow-sm">
               <Plus className="w-4 h-4" /> Add Statements
             </button>
@@ -282,7 +413,7 @@ const App: React.FC = () => {
               </div>
             </div>
           </div>
-        ) : (
+        ) : viewMode === 'audit' ? (
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 animate-in slide-in-from-bottom duration-500">
             <div className="lg:col-span-4 space-y-6">
               <section className="bg-white dark:bg-slate-900 rounded-[2rem] shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -292,6 +423,9 @@ const App: React.FC = () => {
                     <h3 className="font-black text-lg">Activity History</h3>
                   </div>
                   <div className="flex gap-3">
+                    <button onClick={() => setViewMode('dashboard')} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-black text-xs flex items-center gap-2 transition-all shadow-md active:scale-95">
+                      <LayoutDashboard className="w-4 h-4" /> View Dashboard
+                    </button>
                     <button onClick={() => {
                         const csv = convertToCSV(sortedData);
                         const blob = new Blob([csv], { type: 'text/csv' });
@@ -391,6 +525,215 @@ const App: React.FC = () => {
                     )}
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-8 animate-in fade-in duration-700">
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="bg-white dark:bg-slate-900 p-8 rounded-[2rem] border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="bg-emerald-50 dark:bg-emerald-900/20 p-3 rounded-2xl">
+                    <ArrowUpRight className="w-6 h-6 text-emerald-600" />
+                  </div>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Income</span>
+                </div>
+                <h3 className="text-3xl font-black text-emerald-600 truncate">{formatCurrency(dashboardStats?.totalIncome || 0)}</h3>
+                <p className="text-xs text-slate-400 mt-2 font-medium">Total tracked credits</p>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 p-8 rounded-[2rem] border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="bg-rose-50 dark:bg-rose-900/20 p-3 rounded-2xl">
+                    <ArrowDownRight className="w-6 h-6 text-rose-600" />
+                  </div>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Expenses</span>
+                </div>
+                <h3 className="text-3xl font-black text-rose-600 truncate">{formatCurrency(dashboardStats?.totalExpenses || 0)}</h3>
+                <p className="text-xs text-slate-400 mt-2 font-medium">Total tracked debits</p>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 p-8 rounded-[2rem] border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-2xl">
+                    <Activity className="w-6 h-6 text-blue-600" />
+                  </div>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cash Flow</span>
+                </div>
+                <h3 className={`text-3xl font-black truncate ${(dashboardStats?.netCashFlow || 0) >= 0 ? 'text-blue-600' : 'text-rose-600'}`}>
+                  {formatCurrency(dashboardStats?.netCashFlow || 0)}
+                </h3>
+                <p className="text-xs text-slate-400 mt-2 font-medium">Net movement</p>
+              </div>
+
+              <div className="bg-slate-900 dark:bg-slate-800 p-8 rounded-[2.5rem] border border-slate-800 shadow-xl relative overflow-hidden">
+                <div className="relative z-10">
+                  <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">AI Status</span>
+                  <div className="mt-4 flex items-center gap-3">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                    <p className="text-sm text-white font-black">Data Auditor Active</p>
+                  </div>
+                  <button onClick={async () => {
+                    setIsAnalyzing(true);
+                    setAiSummary(await getFinancialSummary(processedData));
+                    setIsAnalyzing(false);
+                  }} className="mt-6 text-xs text-blue-400 font-black flex items-center gap-2 hover:text-white transition-colors">
+                    RECALCULATE INSIGHTS <ArrowRight className="w-3 h-3" />
+                  </button>
+                </div>
+                <Sparkles className="absolute bottom-[-20px] right-[-20px] w-32 h-32 text-blue-600/10 rotate-12" />
+              </div>
+            </div>
+
+            {/* Main Charts Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Category Breakdown (Donut) */}
+              <div className="lg:col-span-1 bg-white dark:bg-slate-900 p-8 rounded-[2rem] border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex items-center gap-2 mb-8">
+                  <PieChartIcon className="w-4 h-4 text-blue-600" />
+                  <h4 className="font-black text-sm uppercase tracking-widest">Expense Distribution</h4>
+                </div>
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={dashboardStats?.pieData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={100}
+                        paddingAngle={5}
+                        dataKey="value"
+                        stroke="none"
+                      >
+                        {dashboardStats?.pieData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: isDarkMode ? '#1e293b' : '#ffffff',
+                          border: 'none',
+                          borderRadius: '12px',
+                          boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)',
+                          fontSize: '12px',
+                          fontWeight: 'bold'
+                        }}
+                        itemStyle={{ color: isDarkMode ? '#f8fafc' : '#1e293b' }}
+                        formatter={(val: number) => formatCurrency(val)}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-6 space-y-2">
+                  {dashboardStats?.pieData.slice(0, 5).map((entry, idx) => (
+                    <div key={idx} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }}></div>
+                        <span className="text-[10px] font-black text-slate-500 uppercase">{entry.name}</span>
+                      </div>
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-100">{formatCurrency(entry.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Monthly Trend (Area Chart) */}
+              <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-8 rounded-[2rem] border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div className="flex items-center gap-2 mb-8">
+                  <TrendingUp className="w-4 h-4 text-blue-600" />
+                  <h4 className="font-black text-sm uppercase tracking-widest">Financial Performance Trend</h4>
+                </div>
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={dashboardStats?.trendData}>
+                      <defs>
+                        <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="colorExpense" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.1}/>
+                          <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? '#334155' : '#e2e8f0'} />
+                      <XAxis 
+                        dataKey="month" 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={{ fontSize: 10, fontWeight: 'bold', fill: '#94a3b8' }} 
+                        dy={10}
+                      />
+                      <YAxis 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={{ fontSize: 10, fontWeight: 'bold', fill: '#94a3b8' }} 
+                        tickFormatter={(val) => `$${val}`}
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: isDarkMode ? '#1e293b' : '#ffffff',
+                          border: 'none',
+                          borderRadius: '12px',
+                          boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)',
+                          fontSize: '12px',
+                          fontWeight: 'bold'
+                        }}
+                        cursor={{ stroke: '#3b82f6', strokeWidth: 2 }}
+                        formatter={(val: number) => formatCurrency(val)}
+                      />
+                      <Area type="monotone" dataKey="income" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorIncome)" name="Income" />
+                      <Area type="monotone" dataKey="expenses" stroke="#f43f5e" strokeWidth={3} fillOpacity={1} fill="url(#colorExpense)" name="Expenses" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="mt-8 grid grid-cols-2 gap-4">
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Fixed Costs</p>
+                    <p className="text-lg font-black text-slate-800 dark:text-white">{formatCurrency(dashboardStats?.fixedExpenses || 0)}</p>
+                    <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
+                      <div 
+                        className="bg-blue-600 h-full rounded-full" 
+                        style={{ width: `${Math.min(100, (dashboardStats?.fixedExpenses || 0) / (dashboardStats?.totalExpenses || 1) * 100)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Variable Spending</p>
+                    <p className="text-lg font-black text-slate-800 dark:text-white">{formatCurrency(dashboardStats?.variableExpenses || 0)}</p>
+                    <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
+                      <div 
+                        className="bg-amber-500 h-full rounded-full" 
+                        style={{ width: `${Math.min(100, (dashboardStats?.variableExpenses || 0) / (dashboardStats?.totalExpenses || 1) * 100)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Row - Top Payees / Subcategories */}
+            <div className="bg-white dark:bg-slate-900 rounded-[2rem] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+              <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/20">
+                <div className="flex items-center gap-2">
+                  <Tag className="w-4 h-4 text-blue-600" />
+                  <h4 className="font-black text-sm uppercase tracking-widest">Top Spending Streams</h4>
+                </div>
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">By Sub-Category</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 divide-x divide-slate-100 dark:divide-slate-800">
+                {dashboardStats?.topSubCategories.slice(0, 5).map((item, idx) => (
+                  <div key={idx} className="p-8 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                    <div className="flex items-center gap-2 mb-4">
+                       <div className="w-2 h-2 rounded-full" style={{ backgroundColor: CATEGORY_COLORS[item.category] || '#ccc' }}></div>
+                       <span className="text-[10px] font-black text-slate-400 uppercase truncate">{item.category}</span>
+                    </div>
+                    <h5 className="font-black text-slate-800 dark:text-white text-base mb-1 truncate">{item.name}</h5>
+                    <p className="text-xl font-black text-blue-600">{formatCurrency(item.amount)}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

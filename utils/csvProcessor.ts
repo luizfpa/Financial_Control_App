@@ -116,8 +116,8 @@ const categorizeMerchant = (description: string, amount: number): { category: st
   }
 
   // Associated Veterinary
-  if (desc.includes('associated veterinary pur')) {
-    return { category: 'Education', subCategory: 'Vet Validation' };
+  if (desc.includes('associated veterinary')) {
+    return { category: 'Education', subCategory: 'Vet validation' };
   }
 
   // Fullscript
@@ -141,6 +141,9 @@ const categorizeMerchant = (description: string, amount: number): { category: st
   }
   if (desc.includes('andreia depila') || desc.includes('dolce lounge')) {
     return { category: 'Personal', subCategory: 'Beauty' };
+  }
+  if (desc.includes('great clips')) {
+    return { category: 'Personal', subCategory: 'Haircut' };
   }
 
   // Insurance

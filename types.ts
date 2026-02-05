@@ -27,3 +27,15 @@ export interface AiSummary {
   topCategories: { category: string; amount: number }[];
   savingsAdvice: string;
 }
+
+export interface CategorySummary {
+  name: string;
+  value: number;
+  color: string;
+}
+
+export interface MonthlyTrend {
+  month: string;
+  income: number;
+  expenses: number;
+}
